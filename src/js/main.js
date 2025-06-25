@@ -144,15 +144,27 @@ if ("IntersectionObserver" in window) {
 // Character grid
 const grid = document.querySelector(".character-grid");
 const gridzoom = document.querySelector(".character-grid-zoom");
-const gridtoggle = document.querySelector(".character-grid-toggle");
-grid.onmousemove = throttle(e => {
-	if (e.target.tagName === "LI") {
-		gridzoom.innerHTML = e.target.innerHTML;
-	}
-}, 100);
-if (gridtoggle) {
-	gridtoggle.onchange = e => {
-		grid.classList.remove(...fontClasses);
-		grid.classList.add(e.target.value);
-	};
+// const gridtoggle = document.querySelector(".character-grid-toggle"); // Element not found in current HTML
+if (grid && gridzoom) { // Ensure elements exist before attaching listeners
+	grid.onmousemove = throttle(e => {
+		if (e.target.tagName === "LI") {
+			gridzoom.innerHTML = e.target.innerHTML;
+		}
+	}, 100);
+}
+// if (gridtoggle) { // Removed as .character-grid-toggle is not in use
+// 	gridtoggle.onchange = e => {
+// 		grid.classList.remove(...fontClasses);
+// 		grid.classList.add(e.target.value);
+// 	};
+// }
+
+// Dark mode toggle
+const darkModeToggle = document.querySelector(".dark-mode-toggle");
+if (darkModeToggle) {
+	darkModeToggle.addEventListener("click", () => {
+		const isDarkMode = localStorage.getItem("dark-mode") === "true";
+		document.documentElement.setAttribute("data-dark-mode", !isDarkMode);
+		localStorage.setItem("dark-mode", !isDarkMode);
+	});
 }

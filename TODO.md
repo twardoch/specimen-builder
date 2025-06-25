@@ -1,0 +1,13 @@
+- [x] Analyze `generateFontData.js` and Font Data Handling
+- [x] Consolidate Duplicate `charset.json` Data
+- [x] Optimize `generateFontData.js` for Variable Fonts (if applicable) - *Decision: Skip deep changes for MVP.*
+- [x] Review and Refactor UI Components and JavaScript (`src/js/main.js`)
+- [x] Streamline CSS (`src/css/`)
+- [x] Evaluate Content and Configuration (`src/_data/content.js`, `src/_data/site.js`)
+- [x] Build Process and Dependencies
+- [x] General Code Cleanup
+- [x] Testing and Verification
+- [x] Documentation and Reporting: Create/Update `PLAN.md`
+- [x] Documentation and Reporting: Create/Update `TODO.md`
+- [x] Documentation and Reporting: Create/Update `CHANGELOG.md`
+- [ ] Submission

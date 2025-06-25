@@ -28,16 +28,4 @@
 	<body>
 		{{ content }}
 	</body>
-	<script>
-		document
-			.querySelector(".dark-mode-toggle")
-			.addEventListener("click", () => {
-				const isDarkMode = localStorage.getItem("dark-mode") === "true";
-				document.documentElement.setAttribute(
-					"data-dark-mode",
-					!isDarkMode
-				);
-				localStorage.setItem("dark-mode", !isDarkMode);
-			});
-	</script>
 </html>
