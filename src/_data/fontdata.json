@@ -1,22 +1,22 @@
 [
-	{
-		"name": "STIX Two Text",
-		"selector": "stix-two-text",
-		"style": "Regular"
-	},
-	{
-		"name": "STIX Two Text Italic",
-		"selector": "stix-two-text-italic",
-		"style": "Italic"
-	},
-	{
-		"name": "STIX Two Text Bold",
-		"selector": "stix-two-text-bold",
-		"style": "Bold"
-	},
-	{
-		"name": "STIX Two Text Bold Italic",
-		"selector": "stix-two-text-bold-italic",
-		"style": "Bold Italic"
-	}
+    {
+        "name": "STIXTwoText-Bold",
+        "selector": "stixtwotext-bold",
+        "style": "bold"
+    },
+    {
+        "name": "STIXTwoText-BoldItalic",
+        "selector": "stixtwotext-bolditalic",
+        "style": "italic bold"
+    },
+    {
+        "name": "STIXTwoText-Italic",
+        "selector": "stixtwotext-italic",
+        "style": "italic"
+    },
+    {
+        "name": "STIXTwoText",
+        "selector": "stixtwotext",
+        "style": "regular"
+    }
 ]

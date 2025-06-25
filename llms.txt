@@ -1,0 +1,8591 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+_tools/
+  generateFontData.js
+docs/
+  github_pages_auto_deploy.md
+src/
+  _data/
+    fonts/
+      stix-two-text/
+        axes.json
+        charset.json
+        instances.json
+      stix-two-text-bold/
+        axes.json
+        charset.json
+        instances.json
+      stix-two-text-bold-italic/
+        axes.json
+        charset.json
+        instances.json
+      stix-two-text-italic/
+        axes.json
+        charset.json
+        instances.json
+    content.js
+    fontdata.json
+    site.js
+  _includes/
+    utilities/
+      reading-direction-ltrrtl.html
+      reading-direction.html
+    animation.html
+    character-grid.html
+    footer.html
+    interactive-controls.html
+    language.html
+    masthead.html
+    navigation.html
+    setting.html
+    specimen.html
+  _layouts/
+    default.html
+  css/
+    animation.css
+    character-grid.css
+    fonts.css
+    generic.css
+    interactive-controls.css
+    layout.css
+    loading.css
+    main.css
+    theme.css
+    variable-support.css
+  js/
+    assets.js
+    main.js
+  .eslintrc.js
+  index.html
+.editorconfig
+.eleventy.js
+.eleventyignore
+.eslintignore
+.eslintrc.js
+.gitignore
+.prettierignore
+.stylelintrc.js
+.tool-versions
+AUTHORS.txt
+CONTRIBUTORS.txt
+LICENSE.txt
+package.json
+postcss.config.js
+README.md
+webpack.config.js
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="_tools/generateFontData.js">
+// Copyright 2019 Google LLC
+
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+
+// 	https://www.apache.org/licenses/LICENSE-2.0
+
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+const fs = require("fs");
+const util = require("util");
+const path = require("path");
+const {
+	parseFontFile,
+	buildStylesheet,
+	getSelector,
+	suggestFontStyle
+} = require("specimen-skeleton-support");
+
+const srcDirectory = path.resolve(__dirname, "../", "src");
+const fontsDirectory = path.resolve(srcDirectory, "fonts");
+const dataDirectory = path.resolve(srcDirectory, "_data/fonts");
+const metaDataPath = path.resolve(srcDirectory, "_data/", "fontdata.json");
+const fontsStylesheetPath = path.resolve(srcDirectory, "css", "fonts.css");
+
+const assert = (condition, message) => {
+	if (!condition) {
+		throw new Error(message);
+	}
+};
+
+const _appendFile = util.promisify(fs.appendFile);
+const _writeFile = util.promisify(fs.writeFile);
+const writeFile = (path, contents, append) => {
+	console.info("Writing", path);
+	if (append) {
+		return _appendFile(path, contents);
+	}
+	return _writeFile(path, contents);
+};
+
+const writeDataFile = async (filename, fontName, data) => {
+	fs.mkdir(path.join(dataDirectory, fontName), { recursive: true }, () => {
+		const dataFilePath = path.join(dataDirectory, fontName, filename);
+		const fileContents = JSON.stringify(data, null, 4);
+		return writeFile(dataFilePath, fileContents);
+	});
+};
+
+const writeDataFiles = async fontData => {
+	const promises = Object.entries(fontData.data).map(([type, data]) => {
+		return writeDataFile(`${type}.json`, getSelector(fontData, true), data);
+	});
+
+	return Promise.all(promises);
+};
+
+const writeStylesheet = async (fontData, fontFilePath) => {
+	const fontUrl = path.relative(
+		path.dirname(fontsStylesheetPath),
+		fontFilePath
+	);
+	let stylesheet = buildStylesheet(fontData, fontUrl).toString();
+	stylesheet += "\n\n";
+	return writeFile(fontsStylesheetPath, stylesheet, true);
+};
+
+const findFontFile = async directory => {
+	const fontFiles = (await util.promisify(fs.readdir)(directory)).filter(
+		f => path.extname(f) == ".woff2"
+	);
+
+	assert(
+		fontFiles.length > 0,
+		`No WOFF2 font files found. Place your WOFF2 fonts in ${path.relative(
+			process.cwd(),
+			directory
+		)}.`
+	);
+
+	const paths = fontFiles.map(fontFile => ({
+		name: path.basename(fontFile, path.extname(fontFile)),
+		path: path.resolve(fontsDirectory, fontFile)
+	}));
+
+	return paths;
+};
+
+const getMetaData = (fontData, fontFile) => {
+	return {
+		name: fontData.name,
+		selector: getSelector(fontData, true),
+		style: suggestFontStyle(fontFile.name)
+	};
+};
+
+const main = async () => {
+	const fontFiles = process.argv[2] || (await findFontFile(fontsDirectory));
+
+	// Clear out old data files
+	console.log("Deleting old data files");
+	fs.rmdirSync(dataDirectory, { recursive: true });
+
+	// Initialise files
+	writeFile(
+		fontsStylesheetPath,
+		`/* Generated by the Specimen Skeleton */\n`
+	);
+
+	let metaData = [];
+	for (const fontFile of fontFiles) {
+		const fontData = await parseFontFile(fontFile.path);
+		metaData.push(await getMetaData(fontData, fontFile));
+		await Promise.all([
+			writeDataFiles(fontData),
+			writeStylesheet(fontData, fontFile.path)
+		]);
+	}
+
+	const fileContents = JSON.stringify(metaData, null, 4);
+	writeFile(metaDataPath, fileContents);
+};
+
+main().catch(e => {
+	process.exitCode = 1;
+	console.error("Failed to generate font data.", e);
+});
+</file>
+
+<file path="docs/github_pages_auto_deploy.md">
+# GitHub Pages auto deployment
+
+This project includes a GitHub Actions configuration that can automatically
+deploy your specimen site to GitHub Pages.
+
+Follow the following steps to enable it:
+
+1. Generate an SSH deploy key on the command line:
+   ```sh
+   ssh-keygen -t ed25519 -f deploy-key -N ''
+   ```
+2. In GitHub navigate to the repository settings and create a secret named `DEPLOY_KEY`.
+   As value, use the contents of the `deploy-key` file generated in step 1.
+   ![repo-settings](../.github/screenshots/deploy-setup-repo-settings.png)
+3. In GitHub add a deploy key (make sure to `Allow write access`!):
+   ![deploy-key](../.github/screenshots/deploy-setup-deploy-keys.png)
+   As value, use the contents of the `deploy-key.pub` file created in step 1.
+   Make sure `Allow write access` is checked.
+4. Edit `.github/workflows/ci.yml` to enable the deploy step for commits on the `master` branch:
+   ```diff
+      deploy:
+   -    if: false && github.ref == 'refs/heads/master'
+   +    if: github.ref == 'refs/heads/master'
+        runs-on: ubuntu-latest
+        needs: build
+   ```
+5. Done! 🙌
+
+Now whenever you commit on master, your specimen site will automatically be deployed to GitHub pages.
+</file>
+
+<file path="src/_data/fonts/stix-two-text/axes.json">
+[]
+</file>
+
+<file path="src/_data/fonts/stix-two-text/charset.json">
+[
+	{
+		"category": "Letter",
+		"subCategory": null,
+		"script": "latin",
+		"chars": ["01BB", "01C0", "01C1", "01C2", "01C3"]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Uppercase",
+		"script": "latin",
+		"chars": [
+			"0041",
+			"0042",
+			"0043",
+			"0044",
+			"0045",
+			"0046",
+			"0047",
+			"0048",
+			"0049",
+			"004A",
+			"004B",
+			"004C",
+			"004D",
+			"004E",
+			"004F",
+			"0050",
+			"0051",
+			"0052",
+			"0053",
+			"0054",
+			"0055",
+			"0056",
+			"0057",
+			"0058",
+			"0059",
+			"005A",
+			"00C0",
+			"00C1",
+			"00C2",
+			"00C3",
+			"00C4",
+			"00C5",
+			"00C6",
+			"00C7",
+			"00C8",
+			"00C9",
+			"00CA",
+			"00CB",
+			"00CC",
+			"00CD",
+			"00CE",
+			"00CF",
+			"00D0",
+			"00D1",
+			"00D2",
+			"00D3",
+			"00D4",
+			"00D5",
+			"00D6",
+			"00D8",
+			"00D9",
+			"00DA",
+			"00DB",
+			"00DC",
+			"00DD",
+			"00DE",
+			"1E9E",
+			"0100",
+			"0102",
+			"0104",
+			"0106",
+			"0108",
+			"010A",
+			"010C",
+			"010E",
+			"0110",
+			"0112",
+			"0114",
+			"0116",
+			"0118",
+			"011A",
+			"011C",
+			"011E",
+			"0120",
+			"0122",
+			"0124",
+			"0126",
+			"0128",
+			"012A",
+			"012C",
+			"012E",
+			"0130",
+			"0132",
+			"0134",
+			"0136",
+			"0139",
+			"013B",
+			"013D",
+			"013F",
+			"0141",
+			"0143",
+			"0145",
+			"0147",
+			"014A",
+			"014C",
+			"014E",
+			"0150",
+			"0152",
+			"0154",
+			"0156",
+			"0158",
+			"015A",
+			"015C",
+			"015E",
+			"0160",
+			"0162",
+			"0164",
+			"0166",
+			"0168",
+			"016A",
+			"016C",
+			"016E",
+			"0170",
+			"0172",
+			"0174",
+			"0176",
+			"0178",
+			"0179",
+			"017B",
+			"017D",
+			"0190",
+			"01A0",
+			"01AF",
+			"01B5",
+			"01DE",
+			"01FA",
+			"01FC",
+			"01FE",
+			"0218",
+			"021A",
+			"0228",
+			"1E00",
+			"1E02",
+			"1E04",
+			"1E06",
+			"1E08",
+			"1E0A",
+			"1E0C",
+			"1E0E",
+			"1E10",
+			"1E12",
+			"1E14",
+			"1E16",
+			"1E18",
+			"1E1A",
+			"1E1C",
+			"1E1E",
+			"1E20",
+			"1E22",
+			"1E24",
+			"1E26",
+			"1E28",
+			"1E2A",
+			"1E2C",
+			"1E2E",
+			"1E30",
+			"1E32",
+			"1E34",
+			"1E36",
+			"1E38",
+			"1E3A",
+			"1E3C",
+			"1E3E",
+			"1E40",
+			"1E42",
+			"1E44",
+			"1E46",
+			"1E48",
+			"1E4A",
+			"1E4C",
+			"1E4E",
+			"1E50",
+			"1E52",
+			"1E54",
+			"1E56",
+			"1E58",
+			"1E5A",
+			"1E5C",
+			"1E5E",
+			"1E60",
+			"1E62",
+			"1E64",
+			"1E66",
+			"1E68",
+			"1E6A",
+			"1E6C",
+			"1E6E",
+			"1E70",
+			"1E72",
+			"1E74",
+			"1E76",
+			"1E78",
+			"1E7A",
+			"1E7C",
+			"1E7E",
+			"1E80",
+			"1E82",
+			"1E84",
+			"1E86",
+			"1E88",
+			"1E8A",
+			"1E8C",
+			"1E8E",
+			"1E90",
+			"1E92",
+			"1E94",
+			"1EA0",
+			"1EA2",
+			"1EA4",
+			"1EA6",
+			"1EA8",
+			"1EAA",
+			"1EAC",
+			"1EAE",
+			"1EB0",
+			"1EB2",
+			"1EB4",
+			"1EB6",
+			"1EB8",
+			"1EBA",
+			"1EBC",
+			"1EBE",
+			"1EC0",
+			"1EC2",
+			"1EC4",
+			"1EC6",
+			"1EC8",
+			"1ECA",
+			"1ECC",
+			"1ECE",
+			"1ED0",
+			"1ED2",
+			"1ED4",
+			"1ED6",
+			"1ED8",
+			"1EDA",
+			"1EDC",
+			"1EDE",
+			"1EE0",
+			"1EE2",
+			"1EE4",
+			"1EE6",
+			"1EE8",
+			"1EEA",
+			"1EEC",
+			"1EEE",
+			"1EF0",
+			"1EF2",
+			"1EF4",
+			"1EF6",
+			"1EF8",
+			"A792"
+		]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Uppercase",
+		"script": "greek",
+		"chars": [
+			"0391",
+			"0392",
+			"0393",
+			"0394",
+			"0395",
+			"0396",
+			"0397",
+			"0398",
+			"0399",
+			"039A",
+			"039B",
+			"039C",
+			"039D",
+			"039E",
+			"039F",
+			"03A0",
+			"03A1",
+			"03A3",
+			"03A4",
+			"03A5",
+			"03A6",
+			"03A7",
+			"03A8",
+			"03A9",
+			"0386",
+			"0388",
+			"0389",
+			"038A",
+			"038C",
+			"038E",
+			"038F",
+			"03AA",
+			"03AB",
+			"03D8",
+			"03DA",
+			"03DC",
+			"03DE",
+			"03E0",
+			"03D2",
+			"03F4"
+		]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Uppercase",
+		"script": "cyrillic",
+		"chars": [
+			"0410",
+			"0411",
+			"0412",
+			"0413",
+			"0403",
+			"0490",
+			"0414",
+			"0415",
+			"0400",
+			"0401",
+			"0416",
+			"0417",
+			"0418",
+			"0419",
+			"040D",
+			"041A",
+			"040C",
+			"041B",
+			"041C",
+			"041D",
+			"041E",
+			"041F",
+			"0420",
+			"0421",
+			"0422",
+			"0423",
+			"040E",
+			"0424",
+			"0425",
+			"0427",
+			"0426",
+			"0428",
+			"0429",
+			"040F",
+			"042C",
+			"042A",
+			"042B",
+			"0409",
+			"040A",
+			"0405",
+			"0404",
+			"042D",
+			"0406",
+			"0407",
+			"0408",
+			"040B",
+			"042E",
+			"042F",
+			"0402",
+			"0462",
+			"046A",
+			"0472",
+			"0474"
+		]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Uppercase",
+		"script": null,
+		"chars": [
+			"2102",
+			"210D",
+			"2115",
+			"2119",
+			"211A",
+			"211D",
+			"2124",
+			"2107",
+			"210B",
+			"2110",
+			"2112",
+			"211B",
+			"212B",
+			"212C",
+			"2130",
+			"2131",
+			"2132",
+			"2133",
+			"213E",
+			"213F",
+			"2145"
+		]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Uppercase",
+		"script": "Black Letter",
+		"chars": ["212D", "210C", "2111", "211C", "2128"]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Lowercase",
+		"script": "latin",
+		"chars": [
+			"0061",
+			"0062",
+			"0063",
+			"0064",
+			"0065",
+			"0066",
+			"0067",
+			"0068",
+			"0069",
+			"006A",
+			"006B",
+			"006C",
+			"006D",
+			"006E",
+			"006F",
+			"0070",
+			"0071",
+			"0072",
+			"0073",
+			"0074",
+			"0075",
+			"0076",
+			"0077",
+			"0078",
+			"0079",
+			"007A",
+			"00DF",
+			"00E0",
+			"00E1",
+			"00E2",
+			"00E3",
+			"00E4",
+			"00E5",
+			"00E6",
+			"00E7",
+			"00E8",
+			"00E9",
+			"00EA",
+			"00EB",
+			"00EC",
+			"00ED",
+			"00EE",
+			"00EF",
+			"00F0",
+			"00F1",
+			"00F2",
+			"00F3",
+			"00F4",
+			"00F5",
+			"00F6",
+			"00F8",
+			"00F9",
+			"00FA",
+			"00FB",
+			"00FC",
+			"00FD",
+			"00FE",
+			"00FF",
+			"0101",
+			"0103",
+			"0105",
+			"0107",
+			"0109",
+			"010B",
+			"010D",
+			"010F",
+			"0111",
+			"0113",
+			"0115",
+			"0117",
+			"0119",
+			"011B",
+			"011D",
+			"011F",
+			"0121",
+			"0123",
+			"0125",
+			"0127",
+			"0129",
+			"012B",
+			"012D",
+			"012F",
+			"0131",
+			"0133",
+			"0135",
+			"0137",
+			"0138",
+			"013A",
+			"013C",
+			"013E",
+			"0140",
+			"0142",
+			"0144",
+			"0146",
+			"0148",
+			"0149",
+			"014B",
+			"014D",
+			"014F",
+			"0151",
+			"0153",
+			"0155",
+			"0157",
+			"0159",
+			"015B",
+			"015D",
+			"015F",
+			"0161",
+			"0163",
+			"0165",
+			"0167",
+			"0169",
+			"016B",
+			"016D",
+			"016F",
+			"0171",
+			"0173",
+			"0175",
+			"0177",
+			"017A",
+			"017C",
+			"017E",
+			"017F",
+			"0180",
+			"0188",
+			"0195",
+			"0199",
+			"019A",
+			"019B",
+			"019E",
+			"01A1",
+			"01A5",
+			"01AA",
+			"01AB",
+			"01AD",
+			"01B0",
+			"01BA",
+			"01BE",
+			"01DF",
+			"01F0",
+			"01FB",
+			"01FD",
+			"01FF",
+			"0219",
+			"021B",
+			"0221",
+			"0229",
+			"0234",
+			"0235",
+			"0236",
+			"0237",
+			"0262",
+			"026A",
+			"0274",
+			"0276",
+			"0280",
+			"028F",
+			"0299",
+			"029C",
+			"029F",
+			"0250",
+			"0251",
+			"0252",
+			"0253",
+			"0254",
+			"0255",
+			"0256",
+			"0257",
+			"0258",
+			"0259",
+			"025A",
+			"025B",
+			"025C",
+			"025D",
+			"025E",
+			"025F",
+			"0260",
+			"0261",
+			"0263",
+			"0264",
+			"0265",
+			"0266",
+			"0267",
+			"0268",
+			"0269",
+			"026B",
+			"026C",
+			"026D",
+			"026E",
+			"026F",
+			"0270",
+			"0271",
+			"0272",
+			"0273",
+			"0275",
+			"0277",
+			"0278",
+			"0279",
+			"027A",
+			"027B",
+			"027C",
+			"027D",
+			"027E",
+			"027F",
+			"0281",
+			"0282",
+			"0283",
+			"0284",
+			"0285",
+			"0286",
+			"0287",
+			"0288",
+			"0289",
+			"028A",
+			"028B",
+			"028C",
+			"028D",
+			"028E",
+			"0290",
+			"0291",
+			"0292",
+			"0293",
+			"0294",
+			"0295",
+			"0296",
+			"02A1",
+			"02A2",
+			"0297",
+			"0298",
+			"029A",
+			"029B",
+			"029D",
+			"029E",
+			"02A0",
+			"02A3",
+			"02A4",
+			"02A5",
+			"02A6",
+			"02A7",
+			"02A8",
+			"02A9",
+			"02AA",
+			"02AB",
+			"02AC",
+			"02AD",
+			"02AE",
+			"02AF",
+			"1D00",
+			"1D07",
+			"1D1C",
+			"1D81",
+			"1D84",
+			"1D85",
+			"1D8A",
+			"1D8D",
+			"1D8E",
+			"1D98",
+			"1E01",
+			"1E03",
+			"1E05",
+			"1E07",
+			"1E09",
+			"1E0B",
+			"1E0D",
+			"1E0F",
+			"1E11",
+			"1E13",
+			"1E15",
+			"1E17",
+			"1E19",
+			"1E1B",
+			"1E1D",
+			"1E1F",
+			"1E21",
+			"1E23",
+			"1E25",
+			"1E27",
+			"1E29",
+			"1E2B",
+			"1E2D",
+			"1E2F",
+			"1E31",
+			"1E33",
+			"1E35",
+			"1E37",
+			"1E39",
+			"1E3B",
+			"1E3D",
+			"1E3F",
+			"1E41",
+			"1E43",
+			"1E45",
+			"1E47",
+			"1E49",
+			"1E4B",
+			"1E4D",
+			"1E4F",
+			"1E51",
+			"1E53",
+			"1E55",
+			"1E57",
+			"1E59",
+			"1E5B",
+			"1E5D",
+			"1E5F",
+			"1E61",
+			"1E63",
+			"1E65",
+			"1E67",
+			"1E69",
+			"1E6B",
+			"1E6D",
+			"1E6F",
+			"1E71",
+			"1E73",
+			"1E75",
+			"1E77",
+			"1E79",
+			"1E7B",
+			"1E7D",
+			"1E7F",
+			"1E81",
+			"1E83",
+			"1E85",
+			"1E87",
+			"1E89",
+			"1E8B",
+			"1E8D",
+			"1E8F",
+			"1E91",
+			"1E93",
+			"1E95",
+			"1E96",
+			"1E97",
+			"1E98",
+			"1E99",
+			"1E9A",
+			"1E9B",
+			"1E9C",
+			"1E9D",
+			"1E9F",
+			"1EA1",
+			"1EA3",
+			"1EA5",
+			"1EA7",
+			"1EA9",
+			"1EAB",
+			"1EAD",
+			"1EAF",
+			"1EB1",
+			"1EB3",
+			"1EB5",
+			"1EB7",
+			"1EB9",
+			"1EBB",
+			"1EBD",
+			"1EBF",
+			"1EC1",
+			"1EC3",
+			"1EC5",
+			"1EC7",
+			"1EC9",
+			"1ECB",
+			"1ECD",
+			"1ECF",
+			"1ED1",
+			"1ED3",
+			"1ED5",
+			"1ED7",
+			"1ED9",
+			"1EDB",
+			"1EDD",
+			"1EDF",
+			"1EE1",
+			"1EE3",
+			"1EE5",
+			"1EE7",
+			"1EE9",
+			"1EEB",
+			"1EED",
+			"1EEF",
+			"1EF1",
+			"1EF3",
+			"1EF5",
+			"1EF7",
+			"1EF9",
+			"A727"
+		]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Lowercase",
+		"script": "greek",
+		"chars": [
+			"03B1",
+			"03B2",
+			"03B3",
+			"03B4",
+			"03B5",
+			"03B6",
+			"03B7",
+			"03B8",
+			"03B9",
+			"03BA",
+			"03BB",
+			"03BC",
+			"03BD",
+			"03BE",
+			"03BF",
+			"03C0",
+			"03C1",
+			"03C2",
+			"03C3",
+			"03C4",
+			"03C5",
+			"03C6",
+			"03C7",
+			"03C8",
+			"03C9",
+			"03AF",
+			"03CA",
+			"0390",
+			"03CD",
+			"03CB",
+			"03B0",
+			"03CC",
+			"03CE",
+			"03AC",
+			"03AD",
+			"03AE",
+			"03D9",
+			"03DB",
+			"03DD",
+			"03DF",
+			"03E1",
+			"03D0",
+			"03D1",
+			"03D5",
+			"03D6",
+			"03F0",
+			"03F1",
+			"03F5"
+		]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Lowercase",
+		"script": "cyrillic",
+		"chars": [
+			"0430",
+			"0431",
+			"0432",
+			"0433",
+			"0453",
+			"0491",
+			"0434",
+			"0435",
+			"0450",
+			"0451",
+			"0436",
+			"0437",
+			"0438",
+			"0439",
+			"045D",
+			"043A",
+			"045C",
+			"043B",
+			"043C",
+			"043D",
+			"043E",
+			"043F",
+			"0440",
+			"0441",
+			"0442",
+			"0443",
+			"045E",
+			"0444",
+			"0445",
+			"0447",
+			"0446",
+			"0448",
+			"0449",
+			"045F",
+			"044C",
+			"044A",
+			"044B",
+			"0459",
+			"045A",
+			"0455",
+			"0454",
+			"044D",
+			"0456",
+			"0457",
+			"0458",
+			"045B",
+			"044E",
+			"044F",
+			"0452",
+			"0463",
+			"046B",
+			"0473",
+			"0475"
+		]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Lowercase",
+		"script": null,
+		"chars": [
+			"210A",
+			"210E",
+			"210F",
+			"212F",
+			"2134",
+			"213C",
+			"213D",
+			"2146",
+			"2147",
+			"2148",
+			"2149"
+		]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Superscript",
+		"script": "latin",
+		"chars": ["00AA", "00BA"]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Modifier",
+		"script": "latin",
+		"chars": [
+			"02B0",
+			"02B1",
+			"2071",
+			"02B2",
+			"207F",
+			"02B3",
+			"02B4",
+			"02B5",
+			"02B6",
+			"02B7",
+			"02B8",
+			"02E1",
+			"02E2",
+			"02E3"
+		]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Modifier",
+		"script": null,
+		"chars": ["1DA3"]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Ligature",
+		"script": "latin",
+		"chars": ["FB01", "FB02"]
+	},
+	{
+		"category": "Number",
+		"subCategory": "Decimal Digit",
+		"script": null,
+		"chars": [
+			"0030",
+			"0031",
+			"0032",
+			"0033",
+			"0034",
+			"0035",
+			"0036",
+			"0037",
+			"0038",
+			"0039"
+		]
+	},
+	{
+		"category": "Number",
+		"subCategory": "Small",
+		"script": null,
+		"chars": [
+			"2080",
+			"2081",
+			"2082",
+			"2083",
+			"2084",
+			"2085",
+			"2086",
+			"2087",
+			"2088",
+			"2089",
+			"2070",
+			"00B9",
+			"00B2",
+			"00B3",
+			"2074",
+			"2075",
+			"2076",
+			"2077",
+			"2078",
+			"2079"
+		]
+	},
+	{
+		"category": "Number",
+		"subCategory": "Fraction",
+		"script": null,
+		"chars": [
+			"00BD",
+			"00BC",
+			"00BE",
+			"2153",
+			"2154",
+			"2155",
+			"2156",
+			"2157",
+			"2158",
+			"2159",
+			"215A",
+			"215B",
+			"215C",
+			"215D",
+			"215E",
+			"2044"
+		]
+	},
+	{
+		"category": "Punctuation",
+		"subCategory": null,
+		"script": null,
+		"chars": [
+			"0021",
+			"0023",
+			"002A",
+			"002C",
+			"002E",
+			"002F",
+			"003A",
+			"003B",
+			"003F",
+			"005C",
+			"00A1",
+			"00B7",
+			"00BF",
+			"2016",
+			"2022",
+			"2025",
+			"2026",
+			"2038",
+			"203B",
+			"203C",
+			"203E",
+			"2040",
+			"2043",
+			"2047",
+			"204B",
+			"204C",
+			"204D",
+			"204E",
+			"204F",
+			"2050",
+			"2051"
+		]
+	},
+	{
+		"category": "Punctuation",
+		"subCategory": null,
+		"script": "greek",
+		"chars": ["0387", "037E"]
+	},
+	{
+		"category": "Punctuation",
+		"subCategory": "Quote",
+		"script": null,
+		"chars": [
+			"0022",
+			"0027",
+			"00AB",
+			"00BB",
+			"2018",
+			"2019",
+			"201A",
+			"201B",
+			"201C",
+			"201D",
+			"201E",
+			"201F",
+			"2034",
+			"2035",
+			"2036",
+			"2037",
+			"2039",
+			"203A",
+			"2057"
+		]
+	},
+	{
+		"category": "Punctuation",
+		"subCategory": "Parenthesis",
+		"script": null,
+		"chars": [
+			"0028",
+			"0029",
+			"005B",
+			"005D",
+			"007B",
+			"007D",
+			"207D",
+			"207E",
+			"208D",
+			"208E"
+		]
+	},
+	{
+		"category": "Punctuation",
+		"subCategory": "Dash",
+		"script": null,
+		"chars": [
+			"002D",
+			"005F",
+			"00AD",
+			"2010",
+			"2011",
+			"2012",
+			"2013",
+			"2014",
+			"2015",
+			"2017"
+		]
+	},
+	{
+		"category": "Symbol",
+		"subCategory": null,
+		"script": null,
+		"chars": [
+			"0026",
+			"0040",
+			"007C",
+			"00A6",
+			"00A7",
+			"00A9",
+			"2117",
+			"00AE",
+			"00B0",
+			"00B6",
+			"2020",
+			"2021",
+			"2032",
+			"2033",
+			"2105",
+			"2113",
+			"2116",
+			"2118",
+			"211E",
+			"2122",
+			"2125",
+			"212E",
+			"214A",
+			"2423"
+		]
+	},
+	{
+		"category": "Symbol",
+		"subCategory": null,
+		"script": "greek",
+		"chars": ["2129"]
+	},
+	{
+		"category": "Symbol",
+		"subCategory": "Currency",
+		"script": null,
+		"chars": [
+			"0024",
+			"00A2",
+			"00A3",
+			"00A4",
+			"00A5",
+			"20A3",
+			"20A4",
+			"20A7",
+			"20AB",
+			"20AC",
+			"20B9",
+			"20BA",
+			"20BD"
+		]
+	},
+	{
+		"category": "Symbol",
+		"subCategory": "Currency",
+		"script": "latin",
+		"chars": ["0192"]
+	},
+	{
+		"category": "Symbol",
+		"subCategory": "Math",
+		"script": null,
+		"chars": [
+			"0025",
+			"002B",
+			"003C",
+			"003D",
+			"003E",
+			"007E",
+			"00AC",
+			"00B1",
+			"005E",
+			"00B5",
+			"00D7",
+			"00F7",
+			"2030",
+			"2031",
+			"2052",
+			"207A",
+			"207B",
+			"207C",
+			"208A",
+			"208B",
+			"208C",
+			"2126",
+			"2127",
+			"2135",
+			"2136",
+			"2137",
+			"2138",
+			"2140",
+			"2141",
+			"2142",
+			"2143",
+			"2144",
+			"214B",
+			"2212"
+		]
+	},
+	{
+		"category": "Symbol",
+		"subCategory": "Math",
+		"script": "greek",
+		"chars": ["03F6"]
+	},
+	{
+		"category": "Symbol",
+		"subCategory": "Modifier",
+		"script": null,
+		"chars": [
+			"02C2",
+			"02C3",
+			"02C4",
+			"02C5",
+			"02D2",
+			"02D3",
+			"02D4",
+			"02D5",
+			"02D6",
+			"02D7",
+			"02E5",
+			"02E6",
+			"02E7",
+			"02E8",
+			"02E9",
+			"02EC",
+			"02ED",
+			"02F7"
+		]
+	},
+	{
+		"category": "Symbol",
+		"subCategory": "Superscript",
+		"script": null,
+		"chars": ["02DE", "02DF", "02E4"]
+	},
+	{
+		"category": "Symbol",
+		"subCategory": "Superscript",
+		"script": "latin",
+		"chars": ["02E0"]
+	},
+	{
+		"category": "Symbol",
+		"subCategory": "Geometry",
+		"script": null,
+		"chars": ["25CC"]
+	},
+	{
+		"category": "Separator",
+		"subCategory": "Space",
+		"script": null,
+		"chars": ["0020", "00A0", "200B"]
+	},
+	{
+		"category": "Separator",
+		"subCategory": "Space",
+		"script": "math",
+		"chars": ["205F"]
+	},
+	{
+		"category": "Mark",
+		"subCategory": "Modifier",
+		"script": null,
+		"chars": [
+			"02B9",
+			"02BA",
+			"02BB",
+			"02BC",
+			"02BD",
+			"02BE",
+			"02BF",
+			"02C0",
+			"02C1",
+			"02C8",
+			"02C9",
+			"02CA",
+			"02CB",
+			"02CC",
+			"02CD",
+			"02CE",
+			"02CF",
+			"02D0",
+			"02D1"
+		]
+	},
+	{
+		"category": "Mark",
+		"subCategory": "Spacing",
+		"script": null,
+		"chars": [
+			"0060",
+			"00B4",
+			"02C6",
+			"02DC",
+			"00AF",
+			"02D8",
+			"02D9",
+			"00A8",
+			"02DA",
+			"02DD",
+			"02C7",
+			"00B8",
+			"02DB"
+		]
+	},
+	{
+		"category": "Mark",
+		"subCategory": "Spacing",
+		"script": "greek",
+		"chars": ["0384", "0385"]
+	},
+	{
+		"category": "Mark",
+		"subCategory": "Nonspacing",
+		"script": null,
+		"chars": [
+			"0308",
+			"0307",
+			"0300",
+			"0301",
+			"030B",
+			"0302",
+			"030C",
+			"0306",
+			"030A",
+			"0303",
+			"0304",
+			"0305",
+			"0309",
+			"030D",
+			"030E",
+			"030F",
+			"0310",
+			"0311",
+			"0312",
+			"0313",
+			"0314",
+			"0315",
+			"0316",
+			"0317",
+			"0318",
+			"0319",
+			"031A",
+			"031B",
+			"031C",
+			"031D",
+			"031E",
+			"031F",
+			"0320",
+			"0321",
+			"0322",
+			"0323",
+			"0324",
+			"0325",
+			"0326",
+			"0327",
+			"0328",
+			"0329",
+			"032A",
+			"032B",
+			"032C",
+			"032D",
+			"032E",
+			"032F",
+			"0330",
+			"0331",
+			"0332",
+			"0333",
+			"0334",
+			"0335",
+			"0336",
+			"0337",
+			"0338",
+			"0339",
+			"033A",
+			"033B",
+			"033C",
+			"033D",
+			"033E",
+			"033F",
+			"0346",
+			"0347",
+			"034C",
+			"0359",
+			"035C",
+			"0360",
+			"0361",
+			"0362",
+			"20D0",
+			"20D1",
+			"20D2",
+			"20D6",
+			"20D7",
+			"20DB",
+			"20DC",
+			"20E1",
+			"20E5",
+			"20E6",
+			"20E7",
+			"20E8",
+			"20E9",
+			"20EA",
+			"20EB",
+			"20EC",
+			"20ED",
+			"20EE",
+			"20EF",
+			"20F0"
+		]
+	},
+	{
+		"category": "Mark",
+		"subCategory": "Enclosing",
+		"script": null,
+		"chars": ["20DD", "20DE", "20DF", "20E4"]
+	},
+	{
+		"category": "Uncategorised",
+		"subCategory": null,
+		"script": null,
+		"chars": ["F6ED", "FB00", "FB03", "FB04"]
+	}
+]
+</file>
+
+<file path="src/_data/fonts/stix-two-text/instances.json">
+[]
+</file>
+
+<file path="src/_data/fonts/stix-two-text-bold/axes.json">
+[]
+</file>
+
+<file path="src/_data/fonts/stix-two-text-bold/charset.json">
+[
+	{
+		"category": "Letter",
+		"subCategory": null,
+		"script": "latin",
+		"chars": ["01BB", "01C0", "01C1", "01C2", "01C3"]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Uppercase",
+		"script": "latin",
+		"chars": [
+			"0041",
+			"0042",
+			"0043",
+			"0044",
+			"0045",
+			"0046",
+			"0047",
+			"0048",
+			"0049",
+			"004A",
+			"004B",
+			"004C",
+			"004D",
+			"004E",
+			"004F",
+			"0050",
+			"0051",
+			"0052",
+			"0053",
+			"0054",
+			"0055",
+			"0056",
+			"0057",
+			"0058",
+			"0059",
+			"005A",
+			"00C0",
+			"00C1",
+			"00C2",
+			"00C3",
+			"00C4",
+			"00C5",
+			"00C6",
+			"00C7",
+			"00C8",
+			"00C9",
+			"00CA",
+			"00CB",
+			"00CC",
+			"00CD",
+			"00CE",
+			"00CF",
+			"00D0",
+			"00D1",
+			"00D2",
+			"00D3",
+			"00D4",
+			"00D5",
+			"00D6",
+			"00D8",
+			"00D9",
+			"00DA",
+			"00DB",
+			"00DC",
+			"00DD",
+			"00DE",
+			"1E9E",
+			"0100",
+			"0102",
+			"0104",
+			"0106",
+			"0108",
+			"010A",
+			"010C",
+			"010E",
+			"0110",
+			"0112",
+			"0114",
+			"0116",
+			"0118",
+			"011A",
+			"011C",
+			"011E",
+			"0120",
+			"0122",
+			"0124",
+			"0126",
+			"0128",
+			"012A",
+			"012C",
+			"012E",
+			"0130",
+			"0132",
+			"0134",
+			"0136",
+			"0139",
+			"013B",
+			"013D",
+			"013F",
+			"0141",
+			"0143",
+			"0145",
+			"0147",
+			"014A",
+			"014C",
+			"014E",
+			"0150",
+			"0152",
+			"0154",
+			"0156",
+			"0158",
+			"015A",
+			"015C",
+			"015E",
+			"0160",
+			"0162",
+			"0164",
+			"0166",
+			"0168",
+			"016A",
+			"016C",
+			"016E",
+			"0170",
+			"0172",
+			"0174",
+			"0176",
+			"0178",
+			"0179",
+			"017B",
+			"017D",
+			"0190",
+			"01A0",
+			"01AF",
+			"01B5",
+			"01DE",
+			"01FA",
+			"01FC",
+			"01FE",
+			"0218",
+			"021A",
+			"0228",
+			"1E00",
+			"1E02",
+			"1E04",
+			"1E06",
+			"1E08",
+			"1E0A",
+			"1E0C",
+			"1E0E",
+			"1E10",
+			"1E12",
+			"1E14",
+			"1E16",
+			"1E18",
+			"1E1A",
+			"1E1C",
+			"1E1E",
+			"1E20",
+			"1E22",
+			"1E24",
+			"1E26",
+			"1E28",
+			"1E2A",
+			"1E2C",
+			"1E2E",
+			"1E30",
+			"1E32",
+			"1E34",
+			"1E36",
+			"1E38",
+			"1E3A",
+			"1E3C",
+			"1E3E",
+			"1E40",
+			"1E42",
+			"1E44",
+			"1E46",
+			"1E48",
+			"1E4A",
+			"1E4C",
+			"1E4E",
+			"1E50",
+			"1E52",
+			"1E54",
+			"1E56",
+			"1E58",
+			"1E5A",
+			"1E5C",
+			"1E5E",
+			"1E60",
+			"1E62",
+			"1E64",
+			"1E66",
+			"1E68",
+			"1E6A",
+			"1E6C",
+			"1E6E",
+			"1E70",
+			"1E72",
+			"1E74",
+			"1E76",
+			"1E78",
+			"1E7A",
+			"1E7C",
+			"1E7E",
+			"1E80",
+			"1E82",
+			"1E84",
+			"1E86",
+			"1E88",
+			"1E8A",
+			"1E8C",
+			"1E8E",
+			"1E90",
+			"1E92",
+			"1E94",
+			"1EA0",
+			"1EA2",
+			"1EA4",
+			"1EA6",
+			"1EA8",
+			"1EAA",
+			"1EAC",
+			"1EAE",
+			"1EB0",
+			"1EB2",
+			"1EB4",
+			"1EB6",
+			"1EB8",
+			"1EBA",
+			"1EBC",
+			"1EBE",
+			"1EC0",
+			"1EC2",
+			"1EC4",
+			"1EC6",
+			"1EC8",
+			"1ECA",
+			"1ECC",
+			"1ECE",
+			"1ED0",
+			"1ED2",
+			"1ED4",
+			"1ED6",
+			"1ED8",
+			"1EDA",
+			"1EDC",
+			"1EDE",
+			"1EE0",
+			"1EE2",
+			"1EE4",
+			"1EE6",
+			"1EE8",
+			"1EEA",
+			"1EEC",
+			"1EEE",
+			"1EF0",
+			"1EF2",
+			"1EF4",
+			"1EF6",
+			"1EF8",
+			"A792"
+		]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Uppercase",
+		"script": "greek",
+		"chars": [
+			"0391",
+			"0392",
+			"0393",
+			"0394",
+			"0395",
+			"0396",
+			"0397",
+			"0398",
+			"0399",
+			"039A",
+			"039B",
+			"039C",
+			"039D",
+			"039E",
+			"039F",
+			"03A0",
+			"03A1",
+			"03A3",
+			"03A4",
+			"03A5",
+			"03A6",
+			"03A7",
+			"03A8",
+			"03A9",
+			"0386",
+			"0388",
+			"0389",
+			"038A",
+			"038C",
+			"038E",
+			"038F",
+			"03AA",
+			"03AB",
+			"03D8",
+			"03DA",
+			"03DC",
+			"03DE",
+			"03E0",
+			"03D2",
+			"03F4"
+		]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Uppercase",
+		"script": "cyrillic",
+		"chars": [
+			"0410",
+			"0411",
+			"0412",
+			"0413",
+			"0403",
+			"0490",
+			"0414",
+			"0415",
+			"0400",
+			"0401",
+			"0416",
+			"0417",
+			"0418",
+			"0419",
+			"040D",
+			"041A",
+			"040C",
+			"041B",
+			"041C",
+			"041D",
+			"041E",
+			"041F",
+			"0420",
+			"0421",
+			"0422",
+			"0423",
+			"040E",
+			"0424",
+			"0425",
+			"0427",
+			"0426",
+			"0428",
+			"0429",
+			"040F",
+			"042C",
+			"042A",
+			"042B",
+			"0409",
+			"040A",
+			"0405",
+			"0404",
+			"042D",
+			"0406",
+			"0407",
+			"0408",
+			"040B",
+			"042E",
+			"042F",
+			"0402",
+			"0462",
+			"046A",
+			"0472",
+			"0474"
+		]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Uppercase",
+		"script": null,
+		"chars": [
+			"2102",
+			"210D",
+			"2115",
+			"2119",
+			"211A",
+			"211D",
+			"2124",
+			"2107",
+			"210B",
+			"2110",
+			"2112",
+			"211B",
+			"212B",
+			"212C",
+			"2130",
+			"2131",
+			"2132",
+			"2133",
+			"213E",
+			"213F",
+			"2145"
+		]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Uppercase",
+		"script": "Black Letter",
+		"chars": ["212D", "210C", "2111", "211C", "2128"]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Lowercase",
+		"script": "latin",
+		"chars": [
+			"0061",
+			"0062",
+			"0063",
+			"0064",
+			"0065",
+			"0066",
+			"0067",
+			"0068",
+			"0069",
+			"006A",
+			"006B",
+			"006C",
+			"006D",
+			"006E",
+			"006F",
+			"0070",
+			"0071",
+			"0072",
+			"0073",
+			"0074",
+			"0075",
+			"0076",
+			"0077",
+			"0078",
+			"0079",
+			"007A",
+			"00DF",
+			"00E0",
+			"00E1",
+			"00E2",
+			"00E3",
+			"00E4",
+			"00E5",
+			"00E6",
+			"00E7",
+			"00E8",
+			"00E9",
+			"00EA",
+			"00EB",
+			"00EC",
+			"00ED",
+			"00EE",
+			"00EF",
+			"00F0",
+			"00F1",
+			"00F2",
+			"00F3",
+			"00F4",
+			"00F5",
+			"00F6",
+			"00F8",
+			"00F9",
+			"00FA",
+			"00FB",
+			"00FC",
+			"00FD",
+			"00FE",
+			"00FF",
+			"0101",
+			"0103",
+			"0105",
+			"0107",
+			"0109",
+			"010B",
+			"010D",
+			"010F",
+			"0111",
+			"0113",
+			"0115",
+			"0117",
+			"0119",
+			"011B",
+			"011D",
+			"011F",
+			"0121",
+			"0123",
+			"0125",
+			"0127",
+			"0129",
+			"012B",
+			"012D",
+			"012F",
+			"0131",
+			"0133",
+			"0135",
+			"0137",
+			"0138",
+			"013A",
+			"013C",
+			"013E",
+			"0140",
+			"0142",
+			"0144",
+			"0146",
+			"0148",
+			"0149",
+			"014B",
+			"014D",
+			"014F",
+			"0151",
+			"0153",
+			"0155",
+			"0157",
+			"0159",
+			"015B",
+			"015D",
+			"015F",
+			"0161",
+			"0163",
+			"0165",
+			"0167",
+			"0169",
+			"016B",
+			"016D",
+			"016F",
+			"0171",
+			"0173",
+			"0175",
+			"0177",
+			"017A",
+			"017C",
+			"017E",
+			"017F",
+			"0180",
+			"0188",
+			"0195",
+			"0199",
+			"019A",
+			"019B",
+			"019E",
+			"01A1",
+			"01A5",
+			"01AA",
+			"01AB",
+			"01AD",
+			"01B0",
+			"01BA",
+			"01BE",
+			"01DF",
+			"01F0",
+			"01FB",
+			"01FD",
+			"01FF",
+			"0219",
+			"021B",
+			"0221",
+			"0229",
+			"0234",
+			"0235",
+			"0236",
+			"0237",
+			"0262",
+			"026A",
+			"0274",
+			"0276",
+			"0280",
+			"028F",
+			"0299",
+			"029C",
+			"029F",
+			"0250",
+			"0251",
+			"0252",
+			"0253",
+			"0254",
+			"0255",
+			"0256",
+			"0257",
+			"0258",
+			"0259",
+			"025A",
+			"025B",
+			"025C",
+			"025D",
+			"025E",
+			"025F",
+			"0260",
+			"0261",
+			"0263",
+			"0264",
+			"0265",
+			"0266",
+			"0267",
+			"0268",
+			"0269",
+			"026B",
+			"026C",
+			"026D",
+			"026E",
+			"026F",
+			"0270",
+			"0271",
+			"0272",
+			"0273",
+			"0275",
+			"0277",
+			"0278",
+			"0279",
+			"027A",
+			"027B",
+			"027C",
+			"027D",
+			"027E",
+			"027F",
+			"0281",
+			"0282",
+			"0283",
+			"0284",
+			"0285",
+			"0286",
+			"0287",
+			"0288",
+			"0289",
+			"028A",
+			"028B",
+			"028C",
+			"028D",
+			"028E",
+			"0290",
+			"0291",
+			"0292",
+			"0293",
+			"0294",
+			"0295",
+			"0296",
+			"02A1",
+			"02A2",
+			"0297",
+			"0298",
+			"029A",
+			"029B",
+			"029D",
+			"029E",
+			"02A0",
+			"02A3",
+			"02A4",
+			"02A5",
+			"02A6",
+			"02A7",
+			"02A8",
+			"02A9",
+			"02AA",
+			"02AB",
+			"02AC",
+			"02AD",
+			"02AE",
+			"02AF",
+			"1D00",
+			"1D07",
+			"1D1C",
+			"1D81",
+			"1D84",
+			"1D85",
+			"1D8A",
+			"1D8D",
+			"1D8E",
+			"1D98",
+			"1E01",
+			"1E03",
+			"1E05",
+			"1E07",
+			"1E09",
+			"1E0B",
+			"1E0D",
+			"1E0F",
+			"1E11",
+			"1E13",
+			"1E15",
+			"1E17",
+			"1E19",
+			"1E1B",
+			"1E1D",
+			"1E1F",
+			"1E21",
+			"1E23",
+			"1E25",
+			"1E27",
+			"1E29",
+			"1E2B",
+			"1E2D",
+			"1E2F",
+			"1E31",
+			"1E33",
+			"1E35",
+			"1E37",
+			"1E39",
+			"1E3B",
+			"1E3D",
+			"1E3F",
+			"1E41",
+			"1E43",
+			"1E45",
+			"1E47",
+			"1E49",
+			"1E4B",
+			"1E4D",
+			"1E4F",
+			"1E51",
+			"1E53",
+			"1E55",
+			"1E57",
+			"1E59",
+			"1E5B",
+			"1E5D",
+			"1E5F",
+			"1E61",
+			"1E63",
+			"1E65",
+			"1E67",
+			"1E69",
+			"1E6B",
+			"1E6D",
+			"1E6F",
+			"1E71",
+			"1E73",
+			"1E75",
+			"1E77",
+			"1E79",
+			"1E7B",
+			"1E7D",
+			"1E7F",
+			"1E81",
+			"1E83",
+			"1E85",
+			"1E87",
+			"1E89",
+			"1E8B",
+			"1E8D",
+			"1E8F",
+			"1E91",
+			"1E93",
+			"1E95",
+			"1E96",
+			"1E97",
+			"1E98",
+			"1E99",
+			"1E9A",
+			"1E9B",
+			"1E9C",
+			"1E9D",
+			"1E9F",
+			"1EA1",
+			"1EA3",
+			"1EA5",
+			"1EA7",
+			"1EA9",
+			"1EAB",
+			"1EAD",
+			"1EAF",
+			"1EB1",
+			"1EB3",
+			"1EB5",
+			"1EB7",
+			"1EB9",
+			"1EBB",
+			"1EBD",
+			"1EBF",
+			"1EC1",
+			"1EC3",
+			"1EC5",
+			"1EC7",
+			"1EC9",
+			"1ECB",
+			"1ECD",
+			"1ECF",
+			"1ED1",
+			"1ED3",
+			"1ED5",
+			"1ED7",
+			"1ED9",
+			"1EDB",
+			"1EDD",
+			"1EDF",
+			"1EE1",
+			"1EE3",
+			"1EE5",
+			"1EE7",
+			"1EE9",
+			"1EEB",
+			"1EED",
+			"1EEF",
+			"1EF1",
+			"1EF3",
+			"1EF5",
+			"1EF7",
+			"1EF9",
+			"A727"
+		]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Lowercase",
+		"script": "greek",
+		"chars": [
+			"03B1",
+			"03B2",
+			"03B3",
+			"03B4",
+			"03B5",
+			"03B6",
+			"03B7",
+			"03B8",
+			"03B9",
+			"03BA",
+			"03BB",
+			"03BC",
+			"03BD",
+			"03BE",
+			"03BF",
+			"03C0",
+			"03C1",
+			"03C2",
+			"03C3",
+			"03C4",
+			"03C5",
+			"03C6",
+			"03C7",
+			"03C8",
+			"03C9",
+			"03AF",
+			"03CA",
+			"0390",
+			"03CD",
+			"03CB",
+			"03B0",
+			"03CC",
+			"03CE",
+			"03AC",
+			"03AD",
+			"03AE",
+			"03D9",
+			"03DB",
+			"03DD",
+			"03DF",
+			"03E1",
+			"03D0",
+			"03D1",
+			"03D5",
+			"03D6",
+			"03F0",
+			"03F1",
+			"03F5"
+		]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Lowercase",
+		"script": "cyrillic",
+		"chars": [
+			"0430",
+			"0431",
+			"0432",
+			"0433",
+			"0453",
+			"0491",
+			"0434",
+			"0435",
+			"0450",
+			"0451",
+			"0436",
+			"0437",
+			"0438",
+			"0439",
+			"045D",
+			"043A",
+			"045C",
+			"043B",
+			"043C",
+			"043D",
+			"043E",
+			"043F",
+			"0440",
+			"0441",
+			"0442",
+			"0443",
+			"045E",
+			"0444",
+			"0445",
+			"0447",
+			"0446",
+			"0448",
+			"0449",
+			"045F",
+			"044C",
+			"044A",
+			"044B",
+			"0459",
+			"045A",
+			"0455",
+			"0454",
+			"044D",
+			"0456",
+			"0457",
+			"0458",
+			"045B",
+			"044E",
+			"044F",
+			"0452",
+			"0463",
+			"046B",
+			"0473",
+			"0475"
+		]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Lowercase",
+		"script": null,
+		"chars": [
+			"210A",
+			"210E",
+			"210F",
+			"212F",
+			"2134",
+			"213C",
+			"213D",
+			"2146",
+			"2147",
+			"2148",
+			"2149"
+		]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Superscript",
+		"script": "latin",
+		"chars": ["00AA", "00BA"]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Modifier",
+		"script": "latin",
+		"chars": [
+			"02B0",
+			"02B1",
+			"2071",
+			"02B2",
+			"207F",
+			"02B3",
+			"02B4",
+			"02B5",
+			"02B6",
+			"02B7",
+			"02B8",
+			"02E1",
+			"02E2",
+			"02E3"
+		]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Modifier",
+		"script": null,
+		"chars": ["1DA3"]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Ligature",
+		"script": "latin",
+		"chars": ["FB01", "FB02"]
+	},
+	{
+		"category": "Number",
+		"subCategory": "Decimal Digit",
+		"script": null,
+		"chars": [
+			"0030",
+			"0031",
+			"0032",
+			"0033",
+			"0034",
+			"0035",
+			"0036",
+			"0037",
+			"0038",
+			"0039"
+		]
+	},
+	{
+		"category": "Number",
+		"subCategory": "Small",
+		"script": null,
+		"chars": [
+			"2080",
+			"2081",
+			"2082",
+			"2083",
+			"2084",
+			"2085",
+			"2086",
+			"2087",
+			"2088",
+			"2089",
+			"2070",
+			"00B9",
+			"00B2",
+			"00B3",
+			"2074",
+			"2075",
+			"2076",
+			"2077",
+			"2078",
+			"2079"
+		]
+	},
+	{
+		"category": "Number",
+		"subCategory": "Fraction",
+		"script": null,
+		"chars": [
+			"00BD",
+			"00BC",
+			"00BE",
+			"2153",
+			"2154",
+			"2155",
+			"2156",
+			"2157",
+			"2158",
+			"2159",
+			"215A",
+			"215B",
+			"215C",
+			"215D",
+			"215E",
+			"2044"
+		]
+	},
+	{
+		"category": "Punctuation",
+		"subCategory": null,
+		"script": null,
+		"chars": [
+			"0021",
+			"0023",
+			"002A",
+			"002C",
+			"002E",
+			"002F",
+			"003A",
+			"003B",
+			"003F",
+			"005C",
+			"00A1",
+			"00B7",
+			"00BF",
+			"2016",
+			"2022",
+			"2025",
+			"2026",
+			"2038",
+			"203B",
+			"203C",
+			"203E",
+			"2040",
+			"2043",
+			"2047",
+			"204B",
+			"204C",
+			"204D",
+			"204E",
+			"204F",
+			"2050",
+			"2051"
+		]
+	},
+	{
+		"category": "Punctuation",
+		"subCategory": null,
+		"script": "greek",
+		"chars": ["0387", "037E"]
+	},
+	{
+		"category": "Punctuation",
+		"subCategory": "Quote",
+		"script": null,
+		"chars": [
+			"0022",
+			"0027",
+			"00AB",
+			"00BB",
+			"2018",
+			"2019",
+			"201A",
+			"201B",
+			"201C",
+			"201D",
+			"201E",
+			"201F",
+			"2034",
+			"2035",
+			"2036",
+			"2037",
+			"2039",
+			"203A",
+			"2057"
+		]
+	},
+	{
+		"category": "Punctuation",
+		"subCategory": "Parenthesis",
+		"script": null,
+		"chars": [
+			"0028",
+			"0029",
+			"005B",
+			"005D",
+			"007B",
+			"007D",
+			"207D",
+			"207E",
+			"208D",
+			"208E"
+		]
+	},
+	{
+		"category": "Punctuation",
+		"subCategory": "Dash",
+		"script": null,
+		"chars": [
+			"002D",
+			"005F",
+			"00AD",
+			"2010",
+			"2011",
+			"2012",
+			"2013",
+			"2014",
+			"2015",
+			"2017"
+		]
+	},
+	{
+		"category": "Symbol",
+		"subCategory": null,
+		"script": null,
+		"chars": [
+			"0026",
+			"0040",
+			"007C",
+			"00A6",
+			"00A7",
+			"00A9",
+			"2117",
+			"00AE",
+			"00B0",
+			"00B6",
+			"2020",
+			"2021",
+			"2032",
+			"2033",
+			"2105",
+			"2113",
+			"2116",
+			"2118",
+			"211E",
+			"2122",
+			"2125",
+			"212E",
+			"214A",
+			"2423"
+		]
+	},
+	{
+		"category": "Symbol",
+		"subCategory": null,
+		"script": "greek",
+		"chars": ["2129"]
+	},
+	{
+		"category": "Symbol",
+		"subCategory": "Currency",
+		"script": null,
+		"chars": [
+			"0024",
+			"00A2",
+			"00A3",
+			"00A4",
+			"00A5",
+			"20A3",
+			"20A4",
+			"20A7",
+			"20AB",
+			"20AC",
+			"20B9",
+			"20BA",
+			"20BD"
+		]
+	},
+	{
+		"category": "Symbol",
+		"subCategory": "Currency",
+		"script": "latin",
+		"chars": ["0192"]
+	},
+	{
+		"category": "Symbol",
+		"subCategory": "Math",
+		"script": null,
+		"chars": [
+			"0025",
+			"002B",
+			"003C",
+			"003D",
+			"003E",
+			"007E",
+			"00AC",
+			"00B1",
+			"005E",
+			"00B5",
+			"00D7",
+			"00F7",
+			"2030",
+			"2031",
+			"2052",
+			"207A",
+			"207B",
+			"207C",
+			"208A",
+			"208B",
+			"208C",
+			"2126",
+			"2127",
+			"2135",
+			"2136",
+			"2137",
+			"2138",
+			"2140",
+			"2141",
+			"2142",
+			"2143",
+			"2144",
+			"214B",
+			"2212"
+		]
+	},
+	{
+		"category": "Symbol",
+		"subCategory": "Math",
+		"script": "greek",
+		"chars": ["03F6"]
+	},
+	{
+		"category": "Symbol",
+		"subCategory": "Modifier",
+		"script": null,
+		"chars": [
+			"02C2",
+			"02C3",
+			"02C4",
+			"02C5",
+			"02D2",
+			"02D3",
+			"02D4",
+			"02D5",
+			"02D6",
+			"02D7",
+			"02E5",
+			"02E6",
+			"02E7",
+			"02E8",
+			"02E9",
+			"02EC",
+			"02ED",
+			"02F7"
+		]
+	},
+	{
+		"category": "Symbol",
+		"subCategory": "Superscript",
+		"script": null,
+		"chars": ["02DE", "02DF", "02E4"]
+	},
+	{
+		"category": "Symbol",
+		"subCategory": "Superscript",
+		"script": "latin",
+		"chars": ["02E0"]
+	},
+	{
+		"category": "Symbol",
+		"subCategory": "Geometry",
+		"script": null,
+		"chars": ["25CC"]
+	},
+	{
+		"category": "Separator",
+		"subCategory": "Space",
+		"script": null,
+		"chars": ["0020", "00A0", "200B"]
+	},
+	{
+		"category": "Separator",
+		"subCategory": "Space",
+		"script": "math",
+		"chars": ["205F"]
+	},
+	{
+		"category": "Mark",
+		"subCategory": "Modifier",
+		"script": null,
+		"chars": [
+			"02B9",
+			"02BA",
+			"02BB",
+			"02BC",
+			"02BD",
+			"02BE",
+			"02BF",
+			"02C0",
+			"02C1",
+			"02C8",
+			"02C9",
+			"02CA",
+			"02CB",
+			"02CC",
+			"02CD",
+			"02CE",
+			"02CF",
+			"02D0",
+			"02D1"
+		]
+	},
+	{
+		"category": "Mark",
+		"subCategory": "Spacing",
+		"script": null,
+		"chars": [
+			"0060",
+			"00B4",
+			"02C6",
+			"02DC",
+			"00AF",
+			"02D8",
+			"02D9",
+			"00A8",
+			"02DA",
+			"02DD",
+			"02C7",
+			"00B8",
+			"02DB"
+		]
+	},
+	{
+		"category": "Mark",
+		"subCategory": "Spacing",
+		"script": "greek",
+		"chars": ["0384", "0385"]
+	},
+	{
+		"category": "Mark",
+		"subCategory": "Nonspacing",
+		"script": null,
+		"chars": [
+			"0308",
+			"0307",
+			"0300",
+			"0301",
+			"030B",
+			"0302",
+			"030C",
+			"0306",
+			"030A",
+			"0303",
+			"0304",
+			"0305",
+			"0309",
+			"030D",
+			"030E",
+			"030F",
+			"0310",
+			"0311",
+			"0312",
+			"0313",
+			"0314",
+			"0315",
+			"0316",
+			"0317",
+			"0318",
+			"0319",
+			"031A",
+			"031B",
+			"031C",
+			"031D",
+			"031E",
+			"031F",
+			"0320",
+			"0321",
+			"0322",
+			"0323",
+			"0324",
+			"0325",
+			"0326",
+			"0327",
+			"0328",
+			"0329",
+			"032A",
+			"032B",
+			"032C",
+			"032D",
+			"032E",
+			"032F",
+			"0330",
+			"0331",
+			"0332",
+			"0333",
+			"0334",
+			"0335",
+			"0336",
+			"0337",
+			"0338",
+			"0339",
+			"033A",
+			"033B",
+			"033C",
+			"033D",
+			"033E",
+			"033F",
+			"0346",
+			"0347",
+			"034C",
+			"0359",
+			"035C",
+			"0360",
+			"0361",
+			"0362",
+			"20D0",
+			"20D1",
+			"20D2",
+			"20D6",
+			"20D7",
+			"20DB",
+			"20DC",
+			"20E1",
+			"20E5",
+			"20E6",
+			"20E7",
+			"20E8",
+			"20E9",
+			"20EA",
+			"20EB",
+			"20EC",
+			"20ED",
+			"20EE",
+			"20EF",
+			"20F0"
+		]
+	},
+	{
+		"category": "Mark",
+		"subCategory": "Enclosing",
+		"script": null,
+		"chars": ["20DD", "20DE", "20DF", "20E4"]
+	},
+	{
+		"category": "Uncategorised",
+		"subCategory": null,
+		"script": null,
+		"chars": ["F6ED", "FB00", "FB03", "FB04"]
+	}
+]
+</file>
+
+<file path="src/_data/fonts/stix-two-text-bold/instances.json">
+[]
+</file>
+
+<file path="src/_data/fonts/stix-two-text-bold-italic/axes.json">
+[]
+</file>
+
+<file path="src/_data/fonts/stix-two-text-bold-italic/charset.json">
+[
+	{
+		"category": "Letter",
+		"subCategory": null,
+		"script": "latin",
+		"chars": ["01BB", "01C0", "01C1", "01C2", "01C3"]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Uppercase",
+		"script": "latin",
+		"chars": [
+			"0041",
+			"0042",
+			"0043",
+			"0044",
+			"0045",
+			"0046",
+			"0047",
+			"0048",
+			"0049",
+			"004A",
+			"004B",
+			"004C",
+			"004D",
+			"004E",
+			"004F",
+			"0050",
+			"0051",
+			"0052",
+			"0053",
+			"0054",
+			"0055",
+			"0056",
+			"0057",
+			"0058",
+			"0059",
+			"005A",
+			"00C0",
+			"00C1",
+			"00C2",
+			"00C3",
+			"00C4",
+			"00C5",
+			"00C6",
+			"00C7",
+			"00C8",
+			"00C9",
+			"00CA",
+			"00CB",
+			"00CC",
+			"00CD",
+			"00CE",
+			"00CF",
+			"00D0",
+			"00D1",
+			"00D2",
+			"00D3",
+			"00D4",
+			"00D5",
+			"00D6",
+			"00D8",
+			"00D9",
+			"00DA",
+			"00DB",
+			"00DC",
+			"00DD",
+			"00DE",
+			"1E9E",
+			"0100",
+			"0102",
+			"0104",
+			"0106",
+			"0108",
+			"010A",
+			"010C",
+			"010E",
+			"0110",
+			"0112",
+			"0114",
+			"0116",
+			"0118",
+			"011A",
+			"011C",
+			"011E",
+			"0120",
+			"0122",
+			"0124",
+			"0126",
+			"0128",
+			"012A",
+			"012C",
+			"012E",
+			"0130",
+			"0132",
+			"0134",
+			"0136",
+			"0139",
+			"013B",
+			"013D",
+			"013F",
+			"0141",
+			"0143",
+			"0145",
+			"0147",
+			"014A",
+			"014C",
+			"014E",
+			"0150",
+			"0152",
+			"0154",
+			"0156",
+			"0158",
+			"015A",
+			"015C",
+			"015E",
+			"0160",
+			"0162",
+			"0164",
+			"0166",
+			"0168",
+			"016A",
+			"016C",
+			"016E",
+			"0170",
+			"0172",
+			"0174",
+			"0176",
+			"0178",
+			"0179",
+			"017B",
+			"017D",
+			"0190",
+			"01A0",
+			"01AF",
+			"01B5",
+			"01DE",
+			"01FA",
+			"01FC",
+			"01FE",
+			"0218",
+			"021A",
+			"0228",
+			"1E00",
+			"1E02",
+			"1E04",
+			"1E06",
+			"1E08",
+			"1E0A",
+			"1E0C",
+			"1E0E",
+			"1E10",
+			"1E12",
+			"1E14",
+			"1E16",
+			"1E18",
+			"1E1A",
+			"1E1C",
+			"1E1E",
+			"1E20",
+			"1E22",
+			"1E24",
+			"1E26",
+			"1E28",
+			"1E2A",
+			"1E2C",
+			"1E2E",
+			"1E30",
+			"1E32",
+			"1E34",
+			"1E36",
+			"1E38",
+			"1E3A",
+			"1E3C",
+			"1E3E",
+			"1E40",
+			"1E42",
+			"1E44",
+			"1E46",
+			"1E48",
+			"1E4A",
+			"1E4C",
+			"1E4E",
+			"1E50",
+			"1E52",
+			"1E54",
+			"1E56",
+			"1E58",
+			"1E5A",
+			"1E5C",
+			"1E5E",
+			"1E60",
+			"1E62",
+			"1E64",
+			"1E66",
+			"1E68",
+			"1E6A",
+			"1E6C",
+			"1E6E",
+			"1E70",
+			"1E72",
+			"1E74",
+			"1E76",
+			"1E78",
+			"1E7A",
+			"1E7C",
+			"1E7E",
+			"1E80",
+			"1E82",
+			"1E84",
+			"1E86",
+			"1E88",
+			"1E8A",
+			"1E8C",
+			"1E8E",
+			"1E90",
+			"1E92",
+			"1E94",
+			"1EA0",
+			"1EA2",
+			"1EA4",
+			"1EA6",
+			"1EA8",
+			"1EAA",
+			"1EAC",
+			"1EAE",
+			"1EB0",
+			"1EB2",
+			"1EB4",
+			"1EB6",
+			"1EB8",
+			"1EBA",
+			"1EBC",
+			"1EBE",
+			"1EC0",
+			"1EC2",
+			"1EC4",
+			"1EC6",
+			"1EC8",
+			"1ECA",
+			"1ECC",
+			"1ECE",
+			"1ED0",
+			"1ED2",
+			"1ED4",
+			"1ED6",
+			"1ED8",
+			"1EDA",
+			"1EDC",
+			"1EDE",
+			"1EE0",
+			"1EE2",
+			"1EE4",
+			"1EE6",
+			"1EE8",
+			"1EEA",
+			"1EEC",
+			"1EEE",
+			"1EF0",
+			"1EF2",
+			"1EF4",
+			"1EF6",
+			"1EF8",
+			"A792"
+		]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Uppercase",
+		"script": "greek",
+		"chars": [
+			"0391",
+			"0392",
+			"0393",
+			"0394",
+			"0395",
+			"0396",
+			"0397",
+			"0398",
+			"0399",
+			"039A",
+			"039B",
+			"039C",
+			"039D",
+			"039E",
+			"039F",
+			"03A0",
+			"03A1",
+			"03A3",
+			"03A4",
+			"03A5",
+			"03A6",
+			"03A7",
+			"03A8",
+			"03A9",
+			"0386",
+			"0388",
+			"0389",
+			"038A",
+			"038C",
+			"038E",
+			"038F",
+			"03AA",
+			"03AB",
+			"03D8",
+			"03DA",
+			"03DC",
+			"03DE",
+			"03E0",
+			"03D2",
+			"03F4"
+		]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Uppercase",
+		"script": "cyrillic",
+		"chars": [
+			"0410",
+			"0411",
+			"0412",
+			"0413",
+			"0403",
+			"0490",
+			"0414",
+			"0415",
+			"0400",
+			"0401",
+			"0416",
+			"0417",
+			"0418",
+			"0419",
+			"040D",
+			"041A",
+			"040C",
+			"041B",
+			"041C",
+			"041D",
+			"041E",
+			"041F",
+			"0420",
+			"0421",
+			"0422",
+			"0423",
+			"040E",
+			"0424",
+			"0425",
+			"0427",
+			"0426",
+			"0428",
+			"0429",
+			"040F",
+			"042C",
+			"042A",
+			"042B",
+			"0409",
+			"040A",
+			"0405",
+			"0404",
+			"042D",
+			"0406",
+			"0407",
+			"0408",
+			"040B",
+			"042E",
+			"042F",
+			"0402",
+			"0462",
+			"046A",
+			"0472",
+			"0474"
+		]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Uppercase",
+		"script": null,
+		"chars": [
+			"2102",
+			"210D",
+			"2115",
+			"2119",
+			"211A",
+			"211D",
+			"2124",
+			"2107",
+			"210B",
+			"2110",
+			"2112",
+			"211B",
+			"212B",
+			"212C",
+			"2130",
+			"2131",
+			"2132",
+			"2133",
+			"213E",
+			"213F",
+			"2145"
+		]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Uppercase",
+		"script": "Black Letter",
+		"chars": ["212D", "210C", "2111", "211C", "2128"]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Lowercase",
+		"script": "latin",
+		"chars": [
+			"0061",
+			"0062",
+			"0063",
+			"0064",
+			"0065",
+			"0066",
+			"0067",
+			"0068",
+			"0069",
+			"006A",
+			"006B",
+			"006C",
+			"006D",
+			"006E",
+			"006F",
+			"0070",
+			"0071",
+			"0072",
+			"0073",
+			"0074",
+			"0075",
+			"0076",
+			"0077",
+			"0078",
+			"0079",
+			"007A",
+			"00DF",
+			"00E0",
+			"00E1",
+			"00E2",
+			"00E3",
+			"00E4",
+			"00E5",
+			"00E6",
+			"00E7",
+			"00E8",
+			"00E9",
+			"00EA",
+			"00EB",
+			"00EC",
+			"00ED",
+			"00EE",
+			"00EF",
+			"00F0",
+			"00F1",
+			"00F2",
+			"00F3",
+			"00F4",
+			"00F5",
+			"00F6",
+			"00F8",
+			"00F9",
+			"00FA",
+			"00FB",
+			"00FC",
+			"00FD",
+			"00FE",
+			"00FF",
+			"0101",
+			"0103",
+			"0105",
+			"0107",
+			"0109",
+			"010B",
+			"010D",
+			"010F",
+			"0111",
+			"0113",
+			"0115",
+			"0117",
+			"0119",
+			"011B",
+			"011D",
+			"011F",
+			"0121",
+			"0123",
+			"0125",
+			"0127",
+			"0129",
+			"012B",
+			"012D",
+			"012F",
+			"0131",
+			"0133",
+			"0135",
+			"0137",
+			"0138",
+			"013A",
+			"013C",
+			"013E",
+			"0140",
+			"0142",
+			"0144",
+			"0146",
+			"0148",
+			"0149",
+			"014B",
+			"014D",
+			"014F",
+			"0151",
+			"0153",
+			"0155",
+			"0157",
+			"0159",
+			"015B",
+			"015D",
+			"015F",
+			"0161",
+			"0163",
+			"0165",
+			"0167",
+			"0169",
+			"016B",
+			"016D",
+			"016F",
+			"0171",
+			"0173",
+			"0175",
+			"0177",
+			"017A",
+			"017C",
+			"017E",
+			"017F",
+			"0180",
+			"0188",
+			"0195",
+			"0199",
+			"019A",
+			"019B",
+			"019E",
+			"01A1",
+			"01A5",
+			"01AA",
+			"01AB",
+			"01AD",
+			"01B0",
+			"01BA",
+			"01BE",
+			"01DF",
+			"01F0",
+			"01FB",
+			"01FD",
+			"01FF",
+			"0219",
+			"021B",
+			"0221",
+			"0229",
+			"0234",
+			"0235",
+			"0236",
+			"0237",
+			"0262",
+			"026A",
+			"0274",
+			"0276",
+			"0280",
+			"028F",
+			"0299",
+			"029C",
+			"029F",
+			"0250",
+			"0251",
+			"0252",
+			"0253",
+			"0254",
+			"0255",
+			"0256",
+			"0257",
+			"0258",
+			"0259",
+			"025A",
+			"025B",
+			"025C",
+			"025D",
+			"025E",
+			"025F",
+			"0260",
+			"0261",
+			"0263",
+			"0264",
+			"0265",
+			"0266",
+			"0267",
+			"0268",
+			"0269",
+			"026B",
+			"026C",
+			"026D",
+			"026E",
+			"026F",
+			"0270",
+			"0271",
+			"0272",
+			"0273",
+			"0275",
+			"0277",
+			"0278",
+			"0279",
+			"027A",
+			"027B",
+			"027C",
+			"027D",
+			"027E",
+			"027F",
+			"0281",
+			"0282",
+			"0283",
+			"0284",
+			"0285",
+			"0286",
+			"0287",
+			"0288",
+			"0289",
+			"028A",
+			"028B",
+			"028C",
+			"028D",
+			"028E",
+			"0290",
+			"0291",
+			"0292",
+			"0293",
+			"0294",
+			"0295",
+			"0296",
+			"02A1",
+			"02A2",
+			"0297",
+			"0298",
+			"029A",
+			"029B",
+			"029D",
+			"029E",
+			"02A0",
+			"02A3",
+			"02A4",
+			"02A5",
+			"02A6",
+			"02A7",
+			"02A8",
+			"02A9",
+			"02AA",
+			"02AB",
+			"02AC",
+			"02AD",
+			"02AE",
+			"02AF",
+			"1D00",
+			"1D07",
+			"1D1C",
+			"1D81",
+			"1D84",
+			"1D85",
+			"1D8A",
+			"1D8D",
+			"1D8E",
+			"1D98",
+			"1E01",
+			"1E03",
+			"1E05",
+			"1E07",
+			"1E09",
+			"1E0B",
+			"1E0D",
+			"1E0F",
+			"1E11",
+			"1E13",
+			"1E15",
+			"1E17",
+			"1E19",
+			"1E1B",
+			"1E1D",
+			"1E1F",
+			"1E21",
+			"1E23",
+			"1E25",
+			"1E27",
+			"1E29",
+			"1E2B",
+			"1E2D",
+			"1E2F",
+			"1E31",
+			"1E33",
+			"1E35",
+			"1E37",
+			"1E39",
+			"1E3B",
+			"1E3D",
+			"1E3F",
+			"1E41",
+			"1E43",
+			"1E45",
+			"1E47",
+			"1E49",
+			"1E4B",
+			"1E4D",
+			"1E4F",
+			"1E51",
+			"1E53",
+			"1E55",
+			"1E57",
+			"1E59",
+			"1E5B",
+			"1E5D",
+			"1E5F",
+			"1E61",
+			"1E63",
+			"1E65",
+			"1E67",
+			"1E69",
+			"1E6B",
+			"1E6D",
+			"1E6F",
+			"1E71",
+			"1E73",
+			"1E75",
+			"1E77",
+			"1E79",
+			"1E7B",
+			"1E7D",
+			"1E7F",
+			"1E81",
+			"1E83",
+			"1E85",
+			"1E87",
+			"1E89",
+			"1E8B",
+			"1E8D",
+			"1E8F",
+			"1E91",
+			"1E93",
+			"1E95",
+			"1E96",
+			"1E97",
+			"1E98",
+			"1E99",
+			"1E9A",
+			"1E9B",
+			"1E9C",
+			"1E9D",
+			"1E9F",
+			"1EA1",
+			"1EA3",
+			"1EA5",
+			"1EA7",
+			"1EA9",
+			"1EAB",
+			"1EAD",
+			"1EAF",
+			"1EB1",
+			"1EB3",
+			"1EB5",
+			"1EB7",
+			"1EB9",
+			"1EBB",
+			"1EBD",
+			"1EBF",
+			"1EC1",
+			"1EC3",
+			"1EC5",
+			"1EC7",
+			"1EC9",
+			"1ECB",
+			"1ECD",
+			"1ECF",
+			"1ED1",
+			"1ED3",
+			"1ED5",
+			"1ED7",
+			"1ED9",
+			"1EDB",
+			"1EDD",
+			"1EDF",
+			"1EE1",
+			"1EE3",
+			"1EE5",
+			"1EE7",
+			"1EE9",
+			"1EEB",
+			"1EED",
+			"1EEF",
+			"1EF1",
+			"1EF3",
+			"1EF5",
+			"1EF7",
+			"1EF9",
+			"A727"
+		]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Lowercase",
+		"script": "greek",
+		"chars": [
+			"03B1",
+			"03B2",
+			"03B3",
+			"03B4",
+			"03B5",
+			"03B6",
+			"03B7",
+			"03B8",
+			"03B9",
+			"03BA",
+			"03BB",
+			"03BC",
+			"03BD",
+			"03BE",
+			"03BF",
+			"03C0",
+			"03C1",
+			"03C2",
+			"03C3",
+			"03C4",
+			"03C5",
+			"03C6",
+			"03C7",
+			"03C8",
+			"03C9",
+			"03AF",
+			"03CA",
+			"0390",
+			"03CD",
+			"03CB",
+			"03B0",
+			"03CC",
+			"03CE",
+			"03AC",
+			"03AD",
+			"03AE",
+			"03D9",
+			"03DB",
+			"03DD",
+			"03DF",
+			"03E1",
+			"03D0",
+			"03D1",
+			"03D5",
+			"03D6",
+			"03F0",
+			"03F1",
+			"03F5"
+		]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Lowercase",
+		"script": "cyrillic",
+		"chars": [
+			"0430",
+			"0431",
+			"0432",
+			"0433",
+			"0453",
+			"0491",
+			"0434",
+			"0435",
+			"0450",
+			"0451",
+			"0436",
+			"0437",
+			"0438",
+			"0439",
+			"045D",
+			"043A",
+			"045C",
+			"043B",
+			"043C",
+			"043D",
+			"043E",
+			"043F",
+			"0440",
+			"0441",
+			"0442",
+			"0443",
+			"045E",
+			"0444",
+			"0445",
+			"0447",
+			"0446",
+			"0448",
+			"0449",
+			"045F",
+			"044C",
+			"044A",
+			"044B",
+			"0459",
+			"045A",
+			"0455",
+			"0454",
+			"044D",
+			"0456",
+			"0457",
+			"0458",
+			"045B",
+			"044E",
+			"044F",
+			"0452",
+			"0463",
+			"046B",
+			"0473",
+			"0475"
+		]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Lowercase",
+		"script": null,
+		"chars": [
+			"210A",
+			"210E",
+			"210F",
+			"212F",
+			"2134",
+			"213C",
+			"213D",
+			"2146",
+			"2147",
+			"2148",
+			"2149"
+		]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Superscript",
+		"script": "latin",
+		"chars": ["00AA", "00BA"]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Modifier",
+		"script": "latin",
+		"chars": [
+			"02B0",
+			"02B1",
+			"2071",
+			"02B2",
+			"207F",
+			"02B3",
+			"02B4",
+			"02B5",
+			"02B6",
+			"02B7",
+			"02B8",
+			"02E1",
+			"02E2",
+			"02E3"
+		]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Modifier",
+		"script": null,
+		"chars": ["1DA3"]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Ligature",
+		"script": "latin",
+		"chars": ["FB01", "FB02"]
+	},
+	{
+		"category": "Number",
+		"subCategory": "Decimal Digit",
+		"script": null,
+		"chars": [
+			"0030",
+			"0031",
+			"0032",
+			"0033",
+			"0034",
+			"0035",
+			"0036",
+			"0037",
+			"0038",
+			"0039"
+		]
+	},
+	{
+		"category": "Number",
+		"subCategory": "Small",
+		"script": null,
+		"chars": [
+			"2080",
+			"2081",
+			"2082",
+			"2083",
+			"2084",
+			"2085",
+			"2086",
+			"2087",
+			"2088",
+			"2089",
+			"2070",
+			"00B9",
+			"00B2",
+			"00B3",
+			"2074",
+			"2075",
+			"2076",
+			"2077",
+			"2078",
+			"2079"
+		]
+	},
+	{
+		"category": "Number",
+		"subCategory": "Fraction",
+		"script": null,
+		"chars": [
+			"00BD",
+			"00BC",
+			"00BE",
+			"2153",
+			"2154",
+			"2155",
+			"2156",
+			"2157",
+			"2158",
+			"2159",
+			"215A",
+			"215B",
+			"215C",
+			"215D",
+			"215E",
+			"2044"
+		]
+	},
+	{
+		"category": "Punctuation",
+		"subCategory": null,
+		"script": null,
+		"chars": [
+			"0021",
+			"0023",
+			"002A",
+			"002C",
+			"002E",
+			"002F",
+			"003A",
+			"003B",
+			"003F",
+			"005C",
+			"00A1",
+			"00B7",
+			"00BF",
+			"2016",
+			"2022",
+			"2025",
+			"2026",
+			"2038",
+			"203B",
+			"203C",
+			"203E",
+			"2040",
+			"2043",
+			"2047",
+			"204B",
+			"204C",
+			"204D",
+			"204E",
+			"204F",
+			"2050",
+			"2051"
+		]
+	},
+	{
+		"category": "Punctuation",
+		"subCategory": null,
+		"script": "greek",
+		"chars": ["0387", "037E"]
+	},
+	{
+		"category": "Punctuation",
+		"subCategory": "Quote",
+		"script": null,
+		"chars": [
+			"0022",
+			"0027",
+			"00AB",
+			"00BB",
+			"2018",
+			"2019",
+			"201A",
+			"201B",
+			"201C",
+			"201D",
+			"201E",
+			"201F",
+			"2034",
+			"2035",
+			"2036",
+			"2037",
+			"2039",
+			"203A",
+			"2057"
+		]
+	},
+	{
+		"category": "Punctuation",
+		"subCategory": "Parenthesis",
+		"script": null,
+		"chars": [
+			"0028",
+			"0029",
+			"005B",
+			"005D",
+			"007B",
+			"007D",
+			"207D",
+			"207E",
+			"208D",
+			"208E"
+		]
+	},
+	{
+		"category": "Punctuation",
+		"subCategory": "Dash",
+		"script": null,
+		"chars": [
+			"002D",
+			"005F",
+			"00AD",
+			"2010",
+			"2011",
+			"2012",
+			"2013",
+			"2014",
+			"2015",
+			"2017"
+		]
+	},
+	{
+		"category": "Symbol",
+		"subCategory": null,
+		"script": null,
+		"chars": [
+			"0026",
+			"0040",
+			"007C",
+			"00A6",
+			"00A7",
+			"00A9",
+			"2117",
+			"00AE",
+			"00B0",
+			"00B6",
+			"2020",
+			"2021",
+			"2032",
+			"2033",
+			"2105",
+			"2113",
+			"2116",
+			"2118",
+			"211E",
+			"2122",
+			"2125",
+			"212E",
+			"214A",
+			"2423"
+		]
+	},
+	{
+		"category": "Symbol",
+		"subCategory": null,
+		"script": "greek",
+		"chars": ["2129"]
+	},
+	{
+		"category": "Symbol",
+		"subCategory": "Currency",
+		"script": null,
+		"chars": [
+			"0024",
+			"00A2",
+			"00A3",
+			"00A4",
+			"00A5",
+			"20A3",
+			"20A4",
+			"20A7",
+			"20AB",
+			"20AC",
+			"20B9",
+			"20BA",
+			"20BD"
+		]
+	},
+	{
+		"category": "Symbol",
+		"subCategory": "Currency",
+		"script": "latin",
+		"chars": ["0192"]
+	},
+	{
+		"category": "Symbol",
+		"subCategory": "Math",
+		"script": null,
+		"chars": [
+			"0025",
+			"002B",
+			"003C",
+			"003D",
+			"003E",
+			"007E",
+			"00AC",
+			"00B1",
+			"005E",
+			"00B5",
+			"00D7",
+			"00F7",
+			"2030",
+			"2031",
+			"2052",
+			"207A",
+			"207B",
+			"207C",
+			"208A",
+			"208B",
+			"208C",
+			"2126",
+			"2127",
+			"2135",
+			"2136",
+			"2137",
+			"2138",
+			"2140",
+			"2141",
+			"2142",
+			"2143",
+			"2144",
+			"214B",
+			"2212"
+		]
+	},
+	{
+		"category": "Symbol",
+		"subCategory": "Math",
+		"script": "greek",
+		"chars": ["03F6"]
+	},
+	{
+		"category": "Symbol",
+		"subCategory": "Modifier",
+		"script": null,
+		"chars": [
+			"02C2",
+			"02C3",
+			"02C4",
+			"02C5",
+			"02D2",
+			"02D3",
+			"02D4",
+			"02D5",
+			"02D6",
+			"02D7",
+			"02E5",
+			"02E6",
+			"02E7",
+			"02E8",
+			"02E9",
+			"02EC",
+			"02ED",
+			"02F7"
+		]
+	},
+	{
+		"category": "Symbol",
+		"subCategory": "Superscript",
+		"script": null,
+		"chars": ["02DE", "02DF", "02E4"]
+	},
+	{
+		"category": "Symbol",
+		"subCategory": "Superscript",
+		"script": "latin",
+		"chars": ["02E0"]
+	},
+	{
+		"category": "Symbol",
+		"subCategory": "Geometry",
+		"script": null,
+		"chars": ["25CC"]
+	},
+	{
+		"category": "Separator",
+		"subCategory": "Space",
+		"script": null,
+		"chars": ["0020", "00A0", "200B"]
+	},
+	{
+		"category": "Separator",
+		"subCategory": "Space",
+		"script": "math",
+		"chars": ["205F"]
+	},
+	{
+		"category": "Mark",
+		"subCategory": "Modifier",
+		"script": null,
+		"chars": [
+			"02B9",
+			"02BA",
+			"02BB",
+			"02BC",
+			"02BD",
+			"02BE",
+			"02BF",
+			"02C0",
+			"02C1",
+			"02C8",
+			"02C9",
+			"02CA",
+			"02CB",
+			"02CC",
+			"02CD",
+			"02CE",
+			"02CF",
+			"02D0",
+			"02D1"
+		]
+	},
+	{
+		"category": "Mark",
+		"subCategory": "Spacing",
+		"script": null,
+		"chars": [
+			"0060",
+			"00B4",
+			"02C6",
+			"02DC",
+			"00AF",
+			"02D8",
+			"02D9",
+			"00A8",
+			"02DA",
+			"02DD",
+			"02C7",
+			"00B8",
+			"02DB"
+		]
+	},
+	{
+		"category": "Mark",
+		"subCategory": "Spacing",
+		"script": "greek",
+		"chars": ["0384", "0385"]
+	},
+	{
+		"category": "Mark",
+		"subCategory": "Nonspacing",
+		"script": null,
+		"chars": [
+			"0308",
+			"0307",
+			"0300",
+			"0301",
+			"030B",
+			"0302",
+			"030C",
+			"0306",
+			"030A",
+			"0303",
+			"0304",
+			"0305",
+			"0309",
+			"030D",
+			"030E",
+			"030F",
+			"0310",
+			"0311",
+			"0312",
+			"0313",
+			"0314",
+			"0315",
+			"0316",
+			"0317",
+			"0318",
+			"0319",
+			"031A",
+			"031B",
+			"031C",
+			"031D",
+			"031E",
+			"031F",
+			"0320",
+			"0321",
+			"0322",
+			"0323",
+			"0324",
+			"0325",
+			"0326",
+			"0327",
+			"0328",
+			"0329",
+			"032A",
+			"032B",
+			"032C",
+			"032D",
+			"032E",
+			"032F",
+			"0330",
+			"0331",
+			"0332",
+			"0333",
+			"0334",
+			"0335",
+			"0336",
+			"0337",
+			"0338",
+			"0339",
+			"033A",
+			"033B",
+			"033C",
+			"033D",
+			"033E",
+			"033F",
+			"0346",
+			"0347",
+			"034C",
+			"0359",
+			"035C",
+			"0360",
+			"0361",
+			"0362",
+			"20D0",
+			"20D1",
+			"20D2",
+			"20D6",
+			"20D7",
+			"20DB",
+			"20DC",
+			"20E1",
+			"20E5",
+			"20E6",
+			"20E7",
+			"20E8",
+			"20E9",
+			"20EA",
+			"20EB",
+			"20EC",
+			"20ED",
+			"20EE",
+			"20EF",
+			"20F0"
+		]
+	},
+	{
+		"category": "Mark",
+		"subCategory": "Enclosing",
+		"script": null,
+		"chars": ["20DD", "20DE", "20DF", "20E4"]
+	},
+	{
+		"category": "Uncategorised",
+		"subCategory": null,
+		"script": null,
+		"chars": ["F6ED", "FB00", "FB03", "FB04"]
+	}
+]
+</file>
+
+<file path="src/_data/fonts/stix-two-text-bold-italic/instances.json">
+[]
+</file>
+
+<file path="src/_data/fonts/stix-two-text-italic/axes.json">
+[]
+</file>
+
+<file path="src/_data/fonts/stix-two-text-italic/charset.json">
+[
+	{
+		"category": "Letter",
+		"subCategory": null,
+		"script": "latin",
+		"chars": ["01BB", "01C0", "01C1", "01C2", "01C3"]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Uppercase",
+		"script": "latin",
+		"chars": [
+			"0041",
+			"0042",
+			"0043",
+			"0044",
+			"0045",
+			"0046",
+			"0047",
+			"0048",
+			"0049",
+			"004A",
+			"004B",
+			"004C",
+			"004D",
+			"004E",
+			"004F",
+			"0050",
+			"0051",
+			"0052",
+			"0053",
+			"0054",
+			"0055",
+			"0056",
+			"0057",
+			"0058",
+			"0059",
+			"005A",
+			"00C0",
+			"00C1",
+			"00C2",
+			"00C3",
+			"00C4",
+			"00C5",
+			"00C6",
+			"00C7",
+			"00C8",
+			"00C9",
+			"00CA",
+			"00CB",
+			"00CC",
+			"00CD",
+			"00CE",
+			"00CF",
+			"00D0",
+			"00D1",
+			"00D2",
+			"00D3",
+			"00D4",
+			"00D5",
+			"00D6",
+			"00D8",
+			"00D9",
+			"00DA",
+			"00DB",
+			"00DC",
+			"00DD",
+			"00DE",
+			"1E9E",
+			"0100",
+			"0102",
+			"0104",
+			"0106",
+			"0108",
+			"010A",
+			"010C",
+			"010E",
+			"0110",
+			"0112",
+			"0114",
+			"0116",
+			"0118",
+			"011A",
+			"011C",
+			"011E",
+			"0120",
+			"0122",
+			"0124",
+			"0126",
+			"0128",
+			"012A",
+			"012C",
+			"012E",
+			"0130",
+			"0132",
+			"0134",
+			"0136",
+			"0139",
+			"013B",
+			"013D",
+			"013F",
+			"0141",
+			"0143",
+			"0145",
+			"0147",
+			"014A",
+			"014C",
+			"014E",
+			"0150",
+			"0152",
+			"0154",
+			"0156",
+			"0158",
+			"015A",
+			"015C",
+			"015E",
+			"0160",
+			"0162",
+			"0164",
+			"0166",
+			"0168",
+			"016A",
+			"016C",
+			"016E",
+			"0170",
+			"0172",
+			"0174",
+			"0176",
+			"0178",
+			"0179",
+			"017B",
+			"017D",
+			"0190",
+			"01A0",
+			"01AF",
+			"01B5",
+			"01DE",
+			"01FA",
+			"01FC",
+			"01FE",
+			"0218",
+			"021A",
+			"0228",
+			"1E00",
+			"1E02",
+			"1E04",
+			"1E06",
+			"1E08",
+			"1E0A",
+			"1E0C",
+			"1E0E",
+			"1E10",
+			"1E12",
+			"1E14",
+			"1E16",
+			"1E18",
+			"1E1A",
+			"1E1C",
+			"1E1E",
+			"1E20",
+			"1E22",
+			"1E24",
+			"1E26",
+			"1E28",
+			"1E2A",
+			"1E2C",
+			"1E2E",
+			"1E30",
+			"1E32",
+			"1E34",
+			"1E36",
+			"1E38",
+			"1E3A",
+			"1E3C",
+			"1E3E",
+			"1E40",
+			"1E42",
+			"1E44",
+			"1E46",
+			"1E48",
+			"1E4A",
+			"1E4C",
+			"1E4E",
+			"1E50",
+			"1E52",
+			"1E54",
+			"1E56",
+			"1E58",
+			"1E5A",
+			"1E5C",
+			"1E5E",
+			"1E60",
+			"1E62",
+			"1E64",
+			"1E66",
+			"1E68",
+			"1E6A",
+			"1E6C",
+			"1E6E",
+			"1E70",
+			"1E72",
+			"1E74",
+			"1E76",
+			"1E78",
+			"1E7A",
+			"1E7C",
+			"1E7E",
+			"1E80",
+			"1E82",
+			"1E84",
+			"1E86",
+			"1E88",
+			"1E8A",
+			"1E8C",
+			"1E8E",
+			"1E90",
+			"1E92",
+			"1E94",
+			"1EA0",
+			"1EA2",
+			"1EA4",
+			"1EA6",
+			"1EA8",
+			"1EAA",
+			"1EAC",
+			"1EAE",
+			"1EB0",
+			"1EB2",
+			"1EB4",
+			"1EB6",
+			"1EB8",
+			"1EBA",
+			"1EBC",
+			"1EBE",
+			"1EC0",
+			"1EC2",
+			"1EC4",
+			"1EC6",
+			"1EC8",
+			"1ECA",
+			"1ECC",
+			"1ECE",
+			"1ED0",
+			"1ED2",
+			"1ED4",
+			"1ED6",
+			"1ED8",
+			"1EDA",
+			"1EDC",
+			"1EDE",
+			"1EE0",
+			"1EE2",
+			"1EE4",
+			"1EE6",
+			"1EE8",
+			"1EEA",
+			"1EEC",
+			"1EEE",
+			"1EF0",
+			"1EF2",
+			"1EF4",
+			"1EF6",
+			"1EF8",
+			"A792"
+		]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Uppercase",
+		"script": "greek",
+		"chars": [
+			"0391",
+			"0392",
+			"0393",
+			"0394",
+			"0395",
+			"0396",
+			"0397",
+			"0398",
+			"0399",
+			"039A",
+			"039B",
+			"039C",
+			"039D",
+			"039E",
+			"039F",
+			"03A0",
+			"03A1",
+			"03A3",
+			"03A4",
+			"03A5",
+			"03A6",
+			"03A7",
+			"03A8",
+			"03A9",
+			"0386",
+			"0388",
+			"0389",
+			"038A",
+			"038C",
+			"038E",
+			"038F",
+			"03AA",
+			"03AB",
+			"03D8",
+			"03DA",
+			"03DC",
+			"03DE",
+			"03E0",
+			"03D2",
+			"03F4"
+		]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Uppercase",
+		"script": "cyrillic",
+		"chars": [
+			"0410",
+			"0411",
+			"0412",
+			"0413",
+			"0403",
+			"0490",
+			"0414",
+			"0415",
+			"0400",
+			"0401",
+			"0416",
+			"0417",
+			"0418",
+			"0419",
+			"040D",
+			"041A",
+			"040C",
+			"041B",
+			"041C",
+			"041D",
+			"041E",
+			"041F",
+			"0420",
+			"0421",
+			"0422",
+			"0423",
+			"040E",
+			"0424",
+			"0425",
+			"0427",
+			"0426",
+			"0428",
+			"0429",
+			"040F",
+			"042C",
+			"042A",
+			"042B",
+			"0409",
+			"040A",
+			"0405",
+			"0404",
+			"042D",
+			"0406",
+			"0407",
+			"0408",
+			"040B",
+			"042E",
+			"042F",
+			"0402",
+			"0462",
+			"046A",
+			"0472",
+			"0474"
+		]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Uppercase",
+		"script": null,
+		"chars": [
+			"2102",
+			"210D",
+			"2115",
+			"2119",
+			"211A",
+			"211D",
+			"2124",
+			"2107",
+			"210B",
+			"2110",
+			"2112",
+			"211B",
+			"212B",
+			"212C",
+			"2130",
+			"2131",
+			"2132",
+			"2133",
+			"213E",
+			"213F",
+			"2145"
+		]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Uppercase",
+		"script": "Black Letter",
+		"chars": ["212D", "210C", "2111", "211C", "2128"]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Lowercase",
+		"script": "latin",
+		"chars": [
+			"0061",
+			"0062",
+			"0063",
+			"0064",
+			"0065",
+			"0066",
+			"0067",
+			"0068",
+			"0069",
+			"006A",
+			"006B",
+			"006C",
+			"006D",
+			"006E",
+			"006F",
+			"0070",
+			"0071",
+			"0072",
+			"0073",
+			"0074",
+			"0075",
+			"0076",
+			"0077",
+			"0078",
+			"0079",
+			"007A",
+			"00DF",
+			"00E0",
+			"00E1",
+			"00E2",
+			"00E3",
+			"00E4",
+			"00E5",
+			"00E6",
+			"00E7",
+			"00E8",
+			"00E9",
+			"00EA",
+			"00EB",
+			"00EC",
+			"00ED",
+			"00EE",
+			"00EF",
+			"00F0",
+			"00F1",
+			"00F2",
+			"00F3",
+			"00F4",
+			"00F5",
+			"00F6",
+			"00F8",
+			"00F9",
+			"00FA",
+			"00FB",
+			"00FC",
+			"00FD",
+			"00FE",
+			"00FF",
+			"0101",
+			"0103",
+			"0105",
+			"0107",
+			"0109",
+			"010B",
+			"010D",
+			"010F",
+			"0111",
+			"0113",
+			"0115",
+			"0117",
+			"0119",
+			"011B",
+			"011D",
+			"011F",
+			"0121",
+			"0123",
+			"0125",
+			"0127",
+			"0129",
+			"012B",
+			"012D",
+			"012F",
+			"0131",
+			"0133",
+			"0135",
+			"0137",
+			"0138",
+			"013A",
+			"013C",
+			"013E",
+			"0140",
+			"0142",
+			"0144",
+			"0146",
+			"0148",
+			"0149",
+			"014B",
+			"014D",
+			"014F",
+			"0151",
+			"0153",
+			"0155",
+			"0157",
+			"0159",
+			"015B",
+			"015D",
+			"015F",
+			"0161",
+			"0163",
+			"0165",
+			"0167",
+			"0169",
+			"016B",
+			"016D",
+			"016F",
+			"0171",
+			"0173",
+			"0175",
+			"0177",
+			"017A",
+			"017C",
+			"017E",
+			"017F",
+			"0180",
+			"0188",
+			"0195",
+			"0199",
+			"019A",
+			"019B",
+			"019E",
+			"01A1",
+			"01A5",
+			"01AA",
+			"01AB",
+			"01AD",
+			"01B0",
+			"01BA",
+			"01BE",
+			"01DF",
+			"01F0",
+			"01FB",
+			"01FD",
+			"01FF",
+			"0219",
+			"021B",
+			"0221",
+			"0229",
+			"0234",
+			"0235",
+			"0236",
+			"0237",
+			"0262",
+			"026A",
+			"0274",
+			"0276",
+			"0280",
+			"028F",
+			"0299",
+			"029C",
+			"029F",
+			"0250",
+			"0251",
+			"0252",
+			"0253",
+			"0254",
+			"0255",
+			"0256",
+			"0257",
+			"0258",
+			"0259",
+			"025A",
+			"025B",
+			"025C",
+			"025D",
+			"025E",
+			"025F",
+			"0260",
+			"0261",
+			"0263",
+			"0264",
+			"0265",
+			"0266",
+			"0267",
+			"0268",
+			"0269",
+			"026B",
+			"026C",
+			"026D",
+			"026E",
+			"026F",
+			"0270",
+			"0271",
+			"0272",
+			"0273",
+			"0275",
+			"0277",
+			"0278",
+			"0279",
+			"027A",
+			"027B",
+			"027C",
+			"027D",
+			"027E",
+			"027F",
+			"0281",
+			"0282",
+			"0283",
+			"0284",
+			"0285",
+			"0286",
+			"0287",
+			"0288",
+			"0289",
+			"028A",
+			"028B",
+			"028C",
+			"028D",
+			"028E",
+			"0290",
+			"0291",
+			"0292",
+			"0293",
+			"0294",
+			"0295",
+			"0296",
+			"02A1",
+			"02A2",
+			"0297",
+			"0298",
+			"029A",
+			"029B",
+			"029D",
+			"029E",
+			"02A0",
+			"02A3",
+			"02A4",
+			"02A5",
+			"02A6",
+			"02A7",
+			"02A8",
+			"02A9",
+			"02AA",
+			"02AB",
+			"02AC",
+			"02AD",
+			"02AE",
+			"02AF",
+			"1D00",
+			"1D07",
+			"1D1C",
+			"1D81",
+			"1D84",
+			"1D85",
+			"1D8A",
+			"1D8D",
+			"1D8E",
+			"1D98",
+			"1E01",
+			"1E03",
+			"1E05",
+			"1E07",
+			"1E09",
+			"1E0B",
+			"1E0D",
+			"1E0F",
+			"1E11",
+			"1E13",
+			"1E15",
+			"1E17",
+			"1E19",
+			"1E1B",
+			"1E1D",
+			"1E1F",
+			"1E21",
+			"1E23",
+			"1E25",
+			"1E27",
+			"1E29",
+			"1E2B",
+			"1E2D",
+			"1E2F",
+			"1E31",
+			"1E33",
+			"1E35",
+			"1E37",
+			"1E39",
+			"1E3B",
+			"1E3D",
+			"1E3F",
+			"1E41",
+			"1E43",
+			"1E45",
+			"1E47",
+			"1E49",
+			"1E4B",
+			"1E4D",
+			"1E4F",
+			"1E51",
+			"1E53",
+			"1E55",
+			"1E57",
+			"1E59",
+			"1E5B",
+			"1E5D",
+			"1E5F",
+			"1E61",
+			"1E63",
+			"1E65",
+			"1E67",
+			"1E69",
+			"1E6B",
+			"1E6D",
+			"1E6F",
+			"1E71",
+			"1E73",
+			"1E75",
+			"1E77",
+			"1E79",
+			"1E7B",
+			"1E7D",
+			"1E7F",
+			"1E81",
+			"1E83",
+			"1E85",
+			"1E87",
+			"1E89",
+			"1E8B",
+			"1E8D",
+			"1E8F",
+			"1E91",
+			"1E93",
+			"1E95",
+			"1E96",
+			"1E97",
+			"1E98",
+			"1E99",
+			"1E9A",
+			"1E9B",
+			"1E9C",
+			"1E9D",
+			"1E9F",
+			"1EA1",
+			"1EA3",
+			"1EA5",
+			"1EA7",
+			"1EA9",
+			"1EAB",
+			"1EAD",
+			"1EAF",
+			"1EB1",
+			"1EB3",
+			"1EB5",
+			"1EB7",
+			"1EB9",
+			"1EBB",
+			"1EBD",
+			"1EBF",
+			"1EC1",
+			"1EC3",
+			"1EC5",
+			"1EC7",
+			"1EC9",
+			"1ECB",
+			"1ECD",
+			"1ECF",
+			"1ED1",
+			"1ED3",
+			"1ED5",
+			"1ED7",
+			"1ED9",
+			"1EDB",
+			"1EDD",
+			"1EDF",
+			"1EE1",
+			"1EE3",
+			"1EE5",
+			"1EE7",
+			"1EE9",
+			"1EEB",
+			"1EED",
+			"1EEF",
+			"1EF1",
+			"1EF3",
+			"1EF5",
+			"1EF7",
+			"1EF9",
+			"A727"
+		]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Lowercase",
+		"script": "greek",
+		"chars": [
+			"03B1",
+			"03B2",
+			"03B3",
+			"03B4",
+			"03B5",
+			"03B6",
+			"03B7",
+			"03B8",
+			"03B9",
+			"03BA",
+			"03BB",
+			"03BC",
+			"03BD",
+			"03BE",
+			"03BF",
+			"03C0",
+			"03C1",
+			"03C2",
+			"03C3",
+			"03C4",
+			"03C5",
+			"03C6",
+			"03C7",
+			"03C8",
+			"03C9",
+			"03AF",
+			"03CA",
+			"0390",
+			"03CD",
+			"03CB",
+			"03B0",
+			"03CC",
+			"03CE",
+			"03AC",
+			"03AD",
+			"03AE",
+			"03D9",
+			"03DB",
+			"03DD",
+			"03DF",
+			"03E1",
+			"03D0",
+			"03D1",
+			"03D5",
+			"03D6",
+			"03F0",
+			"03F1",
+			"03F5"
+		]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Lowercase",
+		"script": "cyrillic",
+		"chars": [
+			"0430",
+			"0431",
+			"0432",
+			"0433",
+			"0453",
+			"0491",
+			"0434",
+			"0435",
+			"0450",
+			"0451",
+			"0436",
+			"0437",
+			"0438",
+			"0439",
+			"045D",
+			"043A",
+			"045C",
+			"043B",
+			"043C",
+			"043D",
+			"043E",
+			"043F",
+			"0440",
+			"0441",
+			"0442",
+			"0443",
+			"045E",
+			"0444",
+			"0445",
+			"0447",
+			"0446",
+			"0448",
+			"0449",
+			"045F",
+			"044C",
+			"044A",
+			"044B",
+			"0459",
+			"045A",
+			"0455",
+			"0454",
+			"044D",
+			"0456",
+			"0457",
+			"0458",
+			"045B",
+			"044E",
+			"044F",
+			"0452",
+			"0463",
+			"046B",
+			"0473",
+			"0475"
+		]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Lowercase",
+		"script": null,
+		"chars": [
+			"210A",
+			"210E",
+			"210F",
+			"212F",
+			"2134",
+			"213C",
+			"213D",
+			"2146",
+			"2147",
+			"2148",
+			"2149"
+		]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Superscript",
+		"script": "latin",
+		"chars": ["00AA", "00BA"]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Modifier",
+		"script": "latin",
+		"chars": [
+			"02B0",
+			"02B1",
+			"2071",
+			"02B2",
+			"207F",
+			"02B3",
+			"02B4",
+			"02B5",
+			"02B6",
+			"02B7",
+			"02B8",
+			"02E1",
+			"02E2",
+			"02E3"
+		]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Modifier",
+		"script": null,
+		"chars": ["1DA3"]
+	},
+	{
+		"category": "Letter",
+		"subCategory": "Ligature",
+		"script": "latin",
+		"chars": ["FB01", "FB02"]
+	},
+	{
+		"category": "Number",
+		"subCategory": "Decimal Digit",
+		"script": null,
+		"chars": [
+			"0030",
+			"0031",
+			"0032",
+			"0033",
+			"0034",
+			"0035",
+			"0036",
+			"0037",
+			"0038",
+			"0039"
+		]
+	},
+	{
+		"category": "Number",
+		"subCategory": "Small",
+		"script": null,
+		"chars": [
+			"2080",
+			"2081",
+			"2082",
+			"2083",
+			"2084",
+			"2085",
+			"2086",
+			"2087",
+			"2088",
+			"2089",
+			"2070",
+			"00B9",
+			"00B2",
+			"00B3",
+			"2074",
+			"2075",
+			"2076",
+			"2077",
+			"2078",
+			"2079"
+		]
+	},
+	{
+		"category": "Number",
+		"subCategory": "Fraction",
+		"script": null,
+		"chars": [
+			"00BD",
+			"00BC",
+			"00BE",
+			"2153",
+			"2154",
+			"2155",
+			"2156",
+			"2157",
+			"2158",
+			"2159",
+			"215A",
+			"215B",
+			"215C",
+			"215D",
+			"215E",
+			"2044"
+		]
+	},
+	{
+		"category": "Punctuation",
+		"subCategory": null,
+		"script": null,
+		"chars": [
+			"0021",
+			"0023",
+			"002A",
+			"002C",
+			"002E",
+			"002F",
+			"003A",
+			"003B",
+			"003F",
+			"005C",
+			"00A1",
+			"00B7",
+			"00BF",
+			"2016",
+			"2022",
+			"2025",
+			"2026",
+			"2038",
+			"203B",
+			"203C",
+			"203E",
+			"2040",
+			"2043",
+			"2047",
+			"204B",
+			"204C",
+			"204D",
+			"204E",
+			"204F",
+			"2050",
+			"2051"
+		]
+	},
+	{
+		"category": "Punctuation",
+		"subCategory": null,
+		"script": "greek",
+		"chars": ["0387", "037E"]
+	},
+	{
+		"category": "Punctuation",
+		"subCategory": "Quote",
+		"script": null,
+		"chars": [
+			"0022",
+			"0027",
+			"00AB",
+			"00BB",
+			"2018",
+			"2019",
+			"201A",
+			"201B",
+			"201C",
+			"201D",
+			"201E",
+			"201F",
+			"2034",
+			"2035",
+			"2036",
+			"2037",
+			"2039",
+			"203A",
+			"2057"
+		]
+	},
+	{
+		"category": "Punctuation",
+		"subCategory": "Parenthesis",
+		"script": null,
+		"chars": [
+			"0028",
+			"0029",
+			"005B",
+			"005D",
+			"007B",
+			"007D",
+			"207D",
+			"207E",
+			"208D",
+			"208E"
+		]
+	},
+	{
+		"category": "Punctuation",
+		"subCategory": "Dash",
+		"script": null,
+		"chars": [
+			"002D",
+			"005F",
+			"00AD",
+			"2010",
+			"2011",
+			"2012",
+			"2013",
+			"2014",
+			"2015",
+			"2017"
+		]
+	},
+	{
+		"category": "Symbol",
+		"subCategory": null,
+		"script": null,
+		"chars": [
+			"0026",
+			"0040",
+			"007C",
+			"00A6",
+			"00A7",
+			"00A9",
+			"2117",
+			"00AE",
+			"00B0",
+			"00B6",
+			"2020",
+			"2021",
+			"2032",
+			"2033",
+			"2105",
+			"2113",
+			"2116",
+			"2118",
+			"211E",
+			"2122",
+			"2125",
+			"212E",
+			"214A",
+			"2423"
+		]
+	},
+	{
+		"category": "Symbol",
+		"subCategory": null,
+		"script": "greek",
+		"chars": ["2129"]
+	},
+	{
+		"category": "Symbol",
+		"subCategory": "Currency",
+		"script": null,
+		"chars": [
+			"0024",
+			"00A2",
+			"00A3",
+			"00A4",
+			"00A5",
+			"20A3",
+			"20A4",
+			"20A7",
+			"20AB",
+			"20AC",
+			"20B9",
+			"20BA",
+			"20BD"
+		]
+	},
+	{
+		"category": "Symbol",
+		"subCategory": "Currency",
+		"script": "latin",
+		"chars": ["0192"]
+	},
+	{
+		"category": "Symbol",
+		"subCategory": "Math",
+		"script": null,
+		"chars": [
+			"0025",
+			"002B",
+			"003C",
+			"003D",
+			"003E",
+			"007E",
+			"00AC",
+			"00B1",
+			"005E",
+			"00B5",
+			"00D7",
+			"00F7",
+			"2030",
+			"2031",
+			"2052",
+			"207A",
+			"207B",
+			"207C",
+			"208A",
+			"208B",
+			"208C",
+			"2126",
+			"2127",
+			"2135",
+			"2136",
+			"2137",
+			"2138",
+			"2140",
+			"2141",
+			"2142",
+			"2143",
+			"2144",
+			"214B",
+			"2212"
+		]
+	},
+	{
+		"category": "Symbol",
+		"subCategory": "Math",
+		"script": "greek",
+		"chars": ["03F6"]
+	},
+	{
+		"category": "Symbol",
+		"subCategory": "Modifier",
+		"script": null,
+		"chars": [
+			"02C2",
+			"02C3",
+			"02C4",
+			"02C5",
+			"02D2",
+			"02D3",
+			"02D4",
+			"02D5",
+			"02D6",
+			"02D7",
+			"02E5",
+			"02E6",
+			"02E7",
+			"02E8",
+			"02E9",
+			"02EC",
+			"02ED",
+			"02F7"
+		]
+	},
+	{
+		"category": "Symbol",
+		"subCategory": "Superscript",
+		"script": null,
+		"chars": ["02DE", "02DF", "02E4"]
+	},
+	{
+		"category": "Symbol",
+		"subCategory": "Superscript",
+		"script": "latin",
+		"chars": ["02E0"]
+	},
+	{
+		"category": "Symbol",
+		"subCategory": "Geometry",
+		"script": null,
+		"chars": ["25CC"]
+	},
+	{
+		"category": "Separator",
+		"subCategory": "Space",
+		"script": null,
+		"chars": ["0020", "00A0", "200B"]
+	},
+	{
+		"category": "Separator",
+		"subCategory": "Space",
+		"script": "math",
+		"chars": ["205F"]
+	},
+	{
+		"category": "Mark",
+		"subCategory": "Modifier",
+		"script": null,
+		"chars": [
+			"02B9",
+			"02BA",
+			"02BB",
+			"02BC",
+			"02BD",
+			"02BE",
+			"02BF",
+			"02C0",
+			"02C1",
+			"02C8",
+			"02C9",
+			"02CA",
+			"02CB",
+			"02CC",
+			"02CD",
+			"02CE",
+			"02CF",
+			"02D0",
+			"02D1"
+		]
+	},
+	{
+		"category": "Mark",
+		"subCategory": "Spacing",
+		"script": null,
+		"chars": [
+			"0060",
+			"00B4",
+			"02C6",
+			"02DC",
+			"00AF",
+			"02D8",
+			"02D9",
+			"00A8",
+			"02DA",
+			"02DD",
+			"02C7",
+			"00B8",
+			"02DB"
+		]
+	},
+	{
+		"category": "Mark",
+		"subCategory": "Spacing",
+		"script": "greek",
+		"chars": ["0384", "0385"]
+	},
+	{
+		"category": "Mark",
+		"subCategory": "Nonspacing",
+		"script": null,
+		"chars": [
+			"0308",
+			"0307",
+			"0300",
+			"0301",
+			"030B",
+			"0302",
+			"030C",
+			"0306",
+			"030A",
+			"0303",
+			"0304",
+			"0305",
+			"0309",
+			"030D",
+			"030E",
+			"030F",
+			"0310",
+			"0311",
+			"0312",
+			"0313",
+			"0314",
+			"0315",
+			"0316",
+			"0317",
+			"0318",
+			"0319",
+			"031A",
+			"031B",
+			"031C",
+			"031D",
+			"031E",
+			"031F",
+			"0320",
+			"0321",
+			"0322",
+			"0323",
+			"0324",
+			"0325",
+			"0326",
+			"0327",
+			"0328",
+			"0329",
+			"032A",
+			"032B",
+			"032C",
+			"032D",
+			"032E",
+			"032F",
+			"0330",
+			"0331",
+			"0332",
+			"0333",
+			"0334",
+			"0335",
+			"0336",
+			"0337",
+			"0338",
+			"0339",
+			"033A",
+			"033B",
+			"033C",
+			"033D",
+			"033E",
+			"033F",
+			"0346",
+			"0347",
+			"034C",
+			"0359",
+			"035C",
+			"0360",
+			"0361",
+			"0362",
+			"20D0",
+			"20D1",
+			"20D2",
+			"20D6",
+			"20D7",
+			"20DB",
+			"20DC",
+			"20E1",
+			"20E5",
+			"20E6",
+			"20E7",
+			"20E8",
+			"20E9",
+			"20EA",
+			"20EB",
+			"20EC",
+			"20ED",
+			"20EE",
+			"20EF",
+			"20F0"
+		]
+	},
+	{
+		"category": "Mark",
+		"subCategory": "Enclosing",
+		"script": null,
+		"chars": ["20DD", "20DE", "20DF", "20E4"]
+	},
+	{
+		"category": "Uncategorised",
+		"subCategory": null,
+		"script": null,
+		"chars": ["F6ED", "FB00", "FB03", "FB04"]
+	}
+]
+</file>
+
+<file path="src/_data/fonts/stix-two-text-italic/instances.json">
+[]
+</file>
+
+<file path="src/_data/content.js">
+// Edit the variables set here to change the content of the default containers. They are ordered to match the order in the default specimen.
+// To remove a variable from the specimen, delete the whole variable not just the contents.
+
+module.exports = {
+	// Masthead
+	poster: "abc", // This appears as the three large glyphs at the top. Change this to a few interesting glyphs that summarise the typeface. Ψ℘ℜ
+
+	// Tester. This is the default text for the type tester.
+	tester: "Just keep examining every low bid quoted for zinc etchings.",
+
+	// Specimen. These are the four lines which are are set centred. The aim is to show different weights and styles, so choose content that is varied in nature.
+	specimen1: "BORN FREE",
+	specimen2: "Construção",
+	specimen3: "Nineteen Eighty-Four, often published as 1984",
+	specimen4:
+		"Doublethink means the power of holding two contradictory beliefs in one’s mind simultaneously, and accepting",
+
+	// Setting. These four variables correspond to each block of text in the setting container.
+	setting1: "Everyone has the right to life",
+	setting2: "All human beings are born free and equal in dignity and rights.",
+	setting3:
+		"They are endowed with reason and conscience and should act towards one another in a spirit of brotherhood. Everyone is entitled to all the rights and freedoms set forth in this Declaration, without distinction of any kind, such as race, colour, sex, language, religion, political or other opinion, national or social origin, property, birth or other status. Furthermore, no distinction shall be made on the basis of the political, jurisdictional or international status of the country or territory to which a person belongs, whether it be independent, trust, non-self-governing or under any other limitation of sovereignty.",
+	setting4:
+		"Everyone has the right to life, liberty and security of person. No one shall be held in slavery or servitude; slavery and the slave trade shall be prohibited in all their forms. No one shall be subjected to torture or to cruel, inhuman or degrading treatment or punishment. Everyone has the right to recognition everywhere as a person before the law. All are equal before the law and are entitled without any discrimination to equal protection of the law. All are entitled to equal protection against any discrimination in violation of this Declaration and against any incitement to such discrimination.",
+	setting5:
+		"Everyone has the right to an effective remedy by the competent national tribunals for acts violating the fundamental rights granted him by the constitution or by law. No one shall be subjected to arbitrary arrest, detention or exile. Everyone is entitled in full equality to a fair and public hearing by an independent and impartial tribunal, in the determination of his rights and obligations and of any criminal charge against him. (1) Everyone charged with a penal offence has the right to be presumed innocent until proved guilty according to law in a public trial at which he has had all the guarantees necessary for his defence. (2) No one shall be held guilty of any penal offence on account of any act or omission which did not constitute a penal offence, under national or international law, at the time when it was committed. Nor shall a heavier penalty be imposed than the one that was applicable at the time the penal offence was committed. No one shall be subjected to arbitrary interference with his privacy, family, home or correspondence, nor to attacks upon his honour and reputation. Everyone has the right to the protection of the law against such interference or attacks.",
+	setting6:
+		"Article 13. (1) Everyone has the right to freedom of movement and residence within the borders of each state. (2) Everyone has the right to leave any country, including his own, and to return to his country. Article 14. (1) Everyone has the right to seek and to enjoy in other countries asylum from persecution. (2) This right may not be invoked in the case of prosecutions genuinely arising from non-political crimes or from acts contrary to the purposes and principles of the United Nations. Article 15. (1) Everyone has the right to a nationality. (2) No one shall be arbitrarily deprived of his nationality nor denied the right to change his nationality. Article 16. (1) Men and women of full age, without any limitation due to race, nationality or religion, have the right to marry and to found a family. They are entitled to equal rights as to marriage, during marriage and at its dissolution. (2) Marriage shall be entered into only with the free and full consent of the intending spouses. (3) The family is the natural and fundamental group unit of society and is entitled to protection by society and the State. Article 17. (1) Everyone has the right to own property alone as well as in association with others. (2) No one shall be arbitrarily deprived of his property. Article 18. Everyone has the right to freedom of thought, conscience and religion; this right includes freedom to change his religion or belief, and freedom, either alone or in community with others and in public or private, to manifest his religion or belief in teaching, practice, worship and observance. Article 19. Everyone has the right to freedom of opinion and expression; this right includes freedom to hold opinions without interference and to seek, receive and impart information and ideas through any media and regardless of frontiers. Article 20. (1) Everyone has the right to freedom of peaceful assembly and association. (2) No one may be compelled to belong to an association."
+};
+</file>
+
+<file path="src/_data/fontdata.json">
+[
+	{
+		"name": "STIX Two Text",
+		"selector": "stix-two-text",
+		"style": "Regular"
+	},
+	{
+		"name": "STIX Two Text Italic",
+		"selector": "stix-two-text-italic",
+		"style": "Italic"
+	},
+	{
+		"name": "STIX Two Text Bold",
+		"selector": "stix-two-text-bold",
+		"style": "Bold"
+	},
+	{
+		"name": "STIX Two Text Bold Italic",
+		"selector": "stix-two-text-bold-italic",
+		"style": "Bold Italic"
+	}
+]
+</file>
+
+<file path="src/_data/site.js">
+module.exports = {
+	title: "Specimen Builder", // Edit this with the name of your type specimen
+
+	// This determines the reading direction of the text blocks and glyph table.
+	// Options:
+	// Left to right: "ltr"
+	// Right to left: "rtl"
+	// Left to right, top to bottom: "ltrttb"
+	// Right to left, top to bottom: "rtlttb"
+	direction: "ltr",
+
+	description:
+		"A design built on top of Specimen Skeleton, based on research insights into effective digital type specimens.", // The description of your type specimen.
+
+	typeface: "STIX fonts", // The name of the typeface you are building
+	link: "https://www.stixfonts.org", // This is the URL used for the button
+	about:
+		"The mission of the Scientific and Technical Information Exchange (STIX) font creation project is the preparation of a comprehensive set of fonts that serve the scientific and engineering community in the process from manuscript creation through final publication, both in electronic and print formats.", // All about the typeface
+	designers: "Tiro Typeworks", // And who designed it
+	coverage: "Latin, Greek, & Cyrillic", // This populates the link that anchors to the list of languages.
+	language:
+		"Afrikaans, Albanian, Asturian, Basque, Bosnian, Breton, Catalan, Cebuano, Cornish, Corsican, Croatian, Czech, Danish, English, Esperanto, Estonian, Faroese, Faroese, Filipino, Finnish, Flemish, French, Frisian, Friulian, Gaelic, Galician, German, Greenlandic, Guarani, Haitian, Hawaiian, Hiligaynon, Hungarian, Icelandic, Igbo, Indonesian, Irish, Italian, Kurdish, Latin, Latvian, Lithuanian, Livonian, Luxembourgish, Malagasy, Malay, Maltese, Maori, Moldavian, Nederlands, Norwegian, Occitan, Polish, Portuguese, Provencal, Romanian, Romansch, Saami, Samoan, Scots, Scottish, Slovak, Slovenian, Spanish, Swahili, Swedish, Tagalog, Turkish, Walloon, Welsh, Wolof, Belarusian, Bulgarian, Macedonian, Moldavian, Russian, Serbian (Cyrillic), Ukrainian, Greek.",
+
+	// More info: https://css-tricks.com/essential-meta-tags-social-media/
+	metatags: [
+		{
+			property: "og:title",
+			content: ""
+		},
+		{
+			property: "og:description",
+			content: ""
+		},
+		{
+			property: "og:image",
+			content: ""
+		},
+		{
+			property: "og:url",
+			content: ""
+		},
+		{
+			property: "og:site_name",
+			content: ""
+		},
+		{
+			name: "twitter:card",
+			content: ""
+		},
+		{
+			name: "twitter:image:alt",
+			content: ""
+		}
+	]
+};
+</file>
+
+<file path="src/_includes/utilities/reading-direction-ltrrtl.html">
+{% if site.direction == "ltr" %}ltr {% endif %}
+{% if site.direction == "rtl" %}rtl {% endif %}
+{% if site.direction == "ltrttb" %}ltr {% endif %}
+{% if site.direction == "rtlttb" %}rtl {% endif %}
+</file>
+
+<file path="src/_includes/utilities/reading-direction.html">
+{% if site.direction == "ltr" %}ltr {% endif %}
+{% if site.direction == "rtl" %}rtl {% endif %}
+{% if site.direction == "ltrttb" %}ltrttb {% endif %}
+{% if site.direction == "rtlttb" %}rtlttb {% endif %}
+</file>
+
+<file path="src/_includes/animation.html">
+<div class="animation am-i-in-view">
+	I shouldn't animate from red to green when I'm not visible! And my
+	background turns black when I scroll into view.
+</div>
+</file>
+
+<file path="src/_includes/character-grid.html">
+<div class="container-glyphs pb-3u pt-3u {{ main_selector }}">
+
+	<div class="character-grid  {% include utilities/reading-direction-ltrrtl.html %} {{ font[0] }}">
+		{% for set in fonts[main_selector].charset %}
+			{% if set.category == "Separator" %}
+				{% continue %}
+			{% endif %}
+			<h3>
+				{{ set.category }}
+				{% if set.subCategory %}
+					{{ set.subCategory }}
+				{% endif %}
+				{% if set.script %}
+					{{ set.script | capitalize }}
+				{% endif %}
+			</h3>
+			<ol class="character-grid-list">
+			{% for char in set.chars %}
+				<li>&#x{{ char }};</li>
+			{% endfor %}
+			</ol>
+		{% endfor %}
+	</div>
+	<div class="container-preview">
+		<div class="character-grid-zoom-container">
+			<div class="character-grid-zoom">
+				A
+			</div>
+		</div>
+	</div>
+</div>
+</file>
+
+<file path="src/_includes/footer.html">
+<div class="footer pb-5u {{ main_selector }}">
+	<div>
+		<p>Specimen Builder is a <a href="https://www.studioboulton.com">Studio Boulton</a> production built using <a href="https://github.com/kabisa/specimen-skeleton">Specimen Skeleton</a> by <a href="https://kabisa.nl">Kabisa</a>. <a href="https://github.com/markboulton/specimen-builder">Browse the repository on GitHub</a>. Supported by <a href="https://fonts.google.com">Google Fonts</a></p>
+	</div>
+</div>
+</file>
+
+<file path="src/_includes/interactive-controls.html">
+<div class="interactive-controls">
+
+	<div class="controls">
+		{% if fonts[main_selector].instances.length != 0 %}
+			<div class="interactive-controls-container">
+				<label for="interactive-controls-instances-select">Instances</label>
+				<select
+					id="interactive-controls-instances-select"
+					class="interactive-controls-instances"
+				>
+					{% for instance in fonts[main_selector].instances %}
+					<option value="{{ instance.axes | json_stringify | escape }}">
+						{{ instance.name }}
+					</option>
+					{% endfor %}
+				</select>
+			</div>
+		{% endif %}
+
+		{% if fontdata.length >= 2 %}
+			<div class="interactive-controls-container">
+				<label for="interactive-controls-instances-select">Styles</label>
+				<select
+					id="interactive-controls-instances-select"
+					class="interactive-controls-styles"
+				>
+					{% for font in fontdata %}
+					<option value="{{ font.selector }}" {% if font.selector == main_selector %}selected{% endif %}>
+						{{ font.style }}
+					</option>
+					{% endfor %}
+				</select>
+			</div>
+		{% endif %}
+
+
+		<div class="interactive-controls-container interactive-controls-buttons">
+			<button type="button" class="active" value="align-left" aria-label="Align left">
+				<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21.8 21.7H.8c-.5 0-.8-.3-.8-.7s.3-.8.8-.8h21c.4 0 .8.3.8.8s-.4.7-.8.7zm-3-4.5H.8c-.4 0-.8-.3-.8-.8s.3-.8.8-.8h18c.4 0 .8.3.8.8s-.4.8-.8.8zm4.4-4.5H.8c-.5 0-.8-.3-.8-.7 0-.4.3-.8.8-.8h22.5c.4 0 .8.3.8.8-.1.4-.4.7-.9.7zm-4.4-4.5H.8c-.5 0-.8-.3-.8-.7s.3-.8.8-.8h18c.4 0 .8.3.8.8s-.4.7-.8.7zm3-4.5H.8C.3 3.7 0 3.4 0 3s.3-.8.8-.8h21c.4 0 .8.3.8.8s-.4.7-.8.7z"/></svg>
+			</button>
+
+			<button type="button" value="align-centre" aria-label="Align centre">
+				<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21.7 21.7H2.2c-.4 0-.8-.3-.8-.8s.3-.8.8-.8h19.5c.4 0 .8.3.8.8s-.3.8-.8.8zm-3-4.5H5.2c-.4 0-.8-.3-.8-.8s.3-.8.8-.8h13.5c.4 0 .8.3.8.8s-.3.8-.8.8zm4.5-4.5H.7c-.4 0-.7-.3-.7-.7 0-.4.3-.8.8-.8h22.5c.4 0 .8.3.8.8-.1.4-.4.7-.9.7zm-4.5-4.5H5.2c-.4 0-.8-.3-.8-.8s.3-.8.8-.8h13.5c.4 0 .8.3.8.8s-.3.8-.8.8zm3-4.5H2.2c-.4 0-.7-.3-.7-.7s.3-.8.8-.8h19.5c.4 0 .8.3.8.8s-.4.7-.9.7z"/></svg>
+			</button>
+
+			<button type="button" value="align-right" aria-label="Align right">
+				<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M2.2 3.7h21c.5 0 .8-.3.8-.7s-.3-.8-.8-.8h-21c-.4 0-.7.4-.7.8s.3.7.7.7zm21 16.5h-21c-.4 0-.8.3-.8.8s.3.8.8.8h21c.4 0 .8-.3.8-.8s-.3-.8-.8-.8zm0-13.5h-18c-.4 0-.8.3-.8.8s.3.8.8.8h18c.4 0 .8-.3.8-.8s-.3-.8-.8-.8zm0 9h-18c-.4 0-.8.3-.8.8s.3.8.8.8h18c.4 0 .8-.3.8-.8s-.3-.8-.8-.8zm0-4.5H.8c-.5 0-.8.4-.8.8s.3.7.8.7h22.5c.4 0 .8-.3.8-.7-.1-.4-.4-.8-.9-.8z"/></svg>
+			</button>
+		</div>
+
+		<ul class="interactive-controls-container interactive-controls-sliders">
+			<li>
+				<label for="interactive-controls-line-height">Line height</label>
+				<input
+					type="range"
+					min="0.8"
+					max="2"
+					value="1.1"
+					name="line-height"
+					id="interactive-controls-line-height"
+					step="0.05"
+					class="interactive-controls-slider"
+				/>
+			</li>
+			<li>
+				<label for="interactive-controls-fontsize">Size</label>
+				<input
+					type="range"
+					min="9"
+					max="92"
+					value="48"
+					name="font-size"
+					id="interactive-controls-fontsize"
+					step="any"
+					class="interactive-controls-slider"
+				/>
+			</li>
+		</ul>
+
+		{% if fonts[main_selector].axes.length != 0 %}
+			<label>Variable axis</label>
+			<ul class="interactive-controls-sliders">
+				{% for axis in fonts[main_selector].axes %}
+				<li>
+					<label for="axis-{{ axis.axis }}">{{ axis.name }}</label>
+					<input
+						type="range"
+						min="{{ axis.min }}"
+						max="{{ axis.max }}"
+						value="{{ axis.default }}"
+						name="{{ axis.axis }}"
+						id="axis-{{ axis.axis }}"
+						step="{{ axis.step | default: 0.1 }}"
+						class="interactive-controls-slider"
+					/>
+				</li>
+				{% endfor %}
+			</ul>
+		{% endif %}
+	</div>
+	<div class="interactive-controls-text {% include utilities/reading-direction.html %} {{ main_selector }}" contenteditable="true">
+		<h1>
+			{{ content.tester }}
+		</h1>
+	</div>
+</div>
+</file>
+
+<file path="src/_includes/language.html">
+<div class="language pb-3u pt-1u {{ main_selector }}">
+	<div>
+		<h3 id="coverage">Languages supported by this font</h3>
+		<p>{{ site.language }}</p>
+	</div>
+</div>
+</file>
+
+<file path="src/_includes/masthead.html">
+<div class="masthead">
+	<div class="masthead-title {{ main_selector }}">
+		<h2 class="type-xl">{{ site.typeface }}</h2>
+		<p class="{% include utilities/reading-direction.html %} type-8xl">{{ content.poster }}</p>
+	</div>
+
+	<div class="masthead-meta">
+	{% if site.link %}
+		<a href="{{ site.link }}" class="faux-button">Get {{ site.typeface }}</a>
+	{% endif %}
+	{% if site.about %}
+		<p>{{ site.about }}</p>
+	{% endif %}
+	{% if site.published %}
+		<h3>Published</h3>
+		<p>{{ site.published }}</p>
+	{% endif %}
+	{% if site.designers %}
+		<h3>Designers</h3>
+		<p>{{ site.designers }}</p>
+	{% endif %}
+	{% if site.coverage %}
+		<h3>Coverage</h3>
+		<p><a href="#coverage">{{ site.coverage }}</a></p>
+	{% endif %}
+	</div>
+</div>
+</file>
+
+<file path="src/_includes/navigation.html">
+<div class="navigation">
+	<button aria-labelledby="toggle-label" type="button" class="dark-mode-toggle">
+		<span hidden id="toggle-label">toggle dark and light mode</span>
+		<svg height="48" width="48" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><defs>
+		<style>.a{fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin:round;stroke-width:1.5px;}</style>
+		<style>.b{fill:black;stroke:currentColor;stroke-linecap:round;stroke-linejoin:round;stroke-width:1.5px;}</style>
+		</defs><title>Toggle dark mode</title><circle class="b" cx="12.001" cy="12" r="4.5" /><line class="a" x1="12.001" y1="1.5" x2="12.001" y2="4.5"/><line class="a" x1="12.001" y1="19.5" x2="12.001" y2="22.5"/><line class="a" x1="22.501" y1="12" x2="19.501" y2="12"/><line class="a" x1="4.501" y1="12" x2="1.501" y2="12"/><line class="a" x1="19.425" y1="4.576" x2="17.304" y2="6.697"/><line class="a" x1="6.697" y1="17.304" x2="4.576" y2="19.425"/><line class="a" x1="19.425" y1="19.425" x2="17.304" y2="17.304"/><line class="a" x1="6.697" y1="6.697" x2="4.576" y2="4.576"/></svg>
+	</button>
+</div>
+</file>
+
+<file path="src/_includes/setting.html">
+<div class="setting pb-3u pt-3u">
+	<div class="column-1">
+		<p class="meta">Font size: xxxl</p>
+		<p class="type-3xl {% include utilities/reading-direction.html %} fw900 lh09 {{ main_selector }}">{{ content.setting1 }}</p>
+
+		<p class="meta">Font size: xxl</p>
+		<p class="type-2xl {% include utilities/reading-direction.html %} fw500 lh10 {{ main_selector }}">{{ content.setting2 }}</p>
+
+		<p class="meta">Font size: l</p>
+		<p class="type-l {% include utilities/reading-direction.html %} fw300 {{ main_selector }}">{{ content.setting3 }}</p>
+	</div>
+
+	<div class="column-2 align-justify">
+		<p class="meta centre">Font size: m</p>
+		<p class="type-m {% include utilities/reading-direction.html %} {{ main_selector }}">{{ content.setting4 }}</p>
+
+		<p class="meta centre">Font size: 1em</p>
+		<p class="columns-2 {% include utilities/reading-direction.html %} {{ main_selector }}">{{ content.setting5 }}</p>
+
+		<p class="meta centre">Font size: s</p>
+		<p class="columns-3 type-s {% include utilities/reading-direction.html %} {{ main_selector }}">{{ content.setting6 }}</p>
+	</div>
+</div>
+</file>
+
+<file path="src/_includes/specimen.html">
+<div class="specimen align-centre pb-5u pt-5u {{ main_selector }}">
+	<p class="type-6xl {% include utilities/reading-direction.html %} stixtwotext-bold lh08">{{ content.specimen1 }}</p>
+	<p class="type-5xl {% include utilities/reading-direction.html %} stixtwotext-italic lh13">{{ content.specimen2 }}</p>
+	<p class="type-4xl {% include utilities/reading-direction.html %} lh11">{{ content.specimen3 }}</p>
+	<p class="type-3xl {% include utilities/reading-direction.html %} stixtwotext-bolditalic lh10">{{ content.specimen4 }}</p>
+</div>
+</file>
+
+<file path="src/_layouts/default.html">
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<meta http-equiv="X-UA-Compatible" content="ie=edge" />
+		<meta name="description" content="{{ site.description }}" />
+		{%- for metatag in site.metatags %}
+		<meta{% for m in metatag %} {{m[0]}}="{{m[1]|escape}}" {% endfor %} />
+		{%- endfor %}
+		<title>
+			{{ site.title or renderData.title or title or metadata.title }}
+		</title>
+		<link
+			rel="stylesheet"
+			href="{% webpackAssetPath '../css/main.css' %}"
+		/>
+		<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400&display=swap" rel="stylesheet">
+		<script defer src="{% webpackAssetPath '../js/main.js' %}"></script>
+		<script>
+			document.documentElement.setAttribute(
+				"data-dark-mode",
+				localStorage.getItem("dark-mode")
+			);
+		</script>
+	</head>
+
+	<body>
+		{{ content }}
+	</body>
+	<script>
+		document
+			.querySelector(".dark-mode-toggle")
+			.addEventListener("click", () => {
+				const isDarkMode = localStorage.getItem("dark-mode") === "true";
+				document.documentElement.setAttribute(
+					"data-dark-mode",
+					!isDarkMode
+				);
+				localStorage.setItem("dark-mode", !isDarkMode);
+			});
+	</script>
+</html>
+</file>
+
+<file path="src/css/animation.css">
+/*
+Animation.css
+
+These are boilerplate place-holders for animations.
+The '.in-view' class is used to only show elements when
+they are visible in the user's browser viewport.
+*/
+
+.animation {
+	transition: background 4s; /* To show effect of adding .in-view class */
+	animation: example-animation 1s infinite alternate;
+	animation-play-state: paused;
+	padding: 3em;
+}
+
+.animation.in-view {
+	background: black;
+	animation-play-state: running;
+}
+
+@keyframes example-animation {
+	from {
+		color: red;
+	}
+
+	to {
+		color: lime;
+	}
+}
+</file>
+
+<file path="src/css/character-grid.css">
+/*
+charactergrid.css
+
+These styles define the character grid container css
+*/
+
+:root {
+	--character-grid-cell: 4rem;
+	--character-grid-font-zize: 2rem;
+	--character-grid-gap: 0;
+}
+
+ol {
+	margin: 0;
+	padding: 0;
+}
+
+.container-glyphs {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	grid-template-rows: 1fr;
+	gap: 1px 1px;
+	grid-template-areas: "glyphs preview";
+	position: relative;
+}
+
+/* Responsive layout styles */
+@media only screen and (max-width: 590px) {
+	.container-glyphs {
+		display: block;
+		width: 94vw;
+	}
+}
+
+.character-grid-zoom-container {
+	pointer-events: none;
+	position: sticky;
+	top: 0;
+	background: var(--background);
+	font-size: 28vw;
+	text-align: center;
+}
+
+/* Responsive layout styles */
+@media only screen and (max-width: 590px) {
+	.character-grid-zoom-container {
+		display: none;
+	}
+}
+
+.container-preview {
+	grid-area: glyphs;
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	bottom: 0;
+}
+
+.character-grid {
+	grid-area: preview;
+}
+
+.character-grid-list {
+	list-style-type: none;
+	display: grid;
+	grid-template-columns: repeat(
+		auto-fill,
+		minmax(var(--character-grid-cell), 1fr)
+	);
+	gap: 1px;
+	font-size: var(--character-grid-font-zize);
+	background: var(--background);
+}
+
+.character-grid-list > li {
+	display: flex;
+	height: var(--character-grid-cell);
+	outline: 1px solid var(--grey-dark);
+	justify-content: center;
+	align-items: center;
+}
+
+.character-grid-list > li:hover {
+	cursor: pointer;
+	background-color: var(--text);
+	color: var(--background);
+}
+</file>
+
+<file path="src/css/fonts.css">
+/* Generated by the Specimen Skeleton */
+@font-face {
+	font-family: "STIX Two Text Bold";
+	src: url("../fonts/STIX2Text-Bold.woff2");
+}
+
+.stix-two-text-bold {
+	font-family: "STIX Two Text Bold", var(--specimen-fallback-font, monospace),
+		monospace;
+}
+
+@font-face {
+	font-family: "STIX Two Text Bold Italic";
+	src: url("../fonts/STIX2Text-BoldItalic.woff2");
+}
+
+.stix-two-text-bold-italic {
+	font-family: "STIX Two Text Bold Italic",
+		var(--specimen-fallback-font, monospace), monospace;
+}
+
+@font-face {
+	font-family: "STIX Two Text Italic";
+	src: url("../fonts/STIX2Text-Italic.woff2");
+}
+
+.stix-two-text-italic {
+	font-family: "STIX Two Text Italic",
+		var(--specimen-fallback-font, monospace), monospace;
+}
+
+@font-face {
+	font-family: "STIX Two Text";
+	src: url("../fonts/STIX2Text-Regular.woff2");
+}
+
+.stix-two-text {
+	font-family: "STIX Two Text", var(--specimen-fallback-font, monospace),
+		monospace;
+}
+</file>
+
+<file path="src/css/generic.css">
+/*
+generic.css
+
+Do not edit.
+*/
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+}
+
+html,
+body {
+	padding: 0;
+	margin: 0;
+}
+
+ol,
+ul {
+	list-style-type: none;
+	padding: 0;
+}
+</file>
+
+<file path="src/css/interactive-controls.css">
+.interactive-controls {
+	--label-width: 7em;
+}
+
+.interactive-controls-container {
+	margin: 1rem 0;
+}
+
+.interactive-controls-text {
+	font-size: calc(var(--font-size) * 1px);
+	line-height: var(--line-height);
+}
+
+/* Responsive layout styles */
+@media only screen and (max-width: 590px) {
+	.interactive-controls-text {
+		font-size: calc(var(--font-size) * 0.6px);
+	}
+}
+
+.interactive-controls-instances,
+.interactive-controls-sliders li {
+	display: flex;
+	align-items: center;
+}
+
+.interactive-controls label {
+	flex: none;
+	min-width: var(--label-width);
+}
+
+.interactive-controls-instances select,
+.interactive-controls-slider {
+	width: 100%;
+}
+</file>
+
+<file path="src/css/layout.css">
+main {
+	max-width: 90rem;
+	margin: 0 auto;
+	display: none;
+}
+
+.fonts-loaded main {
+	display: block;
+}
+</file>
+
+<file path="src/css/loading.css">
+/* Show big fat loading screen, and a message when font failed to load */
+.loading-message {
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	background: #000;
+	color: #fff;
+	font-family: monospace;
+	pointer-events: none;
+	user-select: none;
+}
+
+.loading-message-failed,
+.fonts-loaded .loading-message,
+.fonts-failed .loading-message-loading {
+	display: none;
+}
+
+.fonts-failed .loading-message-failed {
+	display: inline;
+}
+</file>
+
+<file path="src/css/main.css">
+/*
+
+Copyright 2019 Google LLC
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+*/
+
+@import "animation.css";
+@import "character-grid.css";
+@import "fonts.css";
+@import "generic.css";
+@import "interactive-controls.css";
+@import "layout.css";
+@import "loading.css";
+@import "variable-support.css";
+@import "theme.css";
+</file>
+
+<file path="src/css/theme.css">
+/* --------- Global styles --------- */
+
+/* Setting up some variables first */
+:root {
+	--light: #fff;
+	--dark: #000;
+	--grey-light: #eee;
+	--grey-mid: #999;
+	--grey-dark: #666;
+	--text: var(--dark);
+	--background: var(--light);
+	--font-system: "Inter", sans-serif;
+	--specimen-fallback-font: var(--font-system);
+}
+
+/* For dark mode */
+html[data-dark-mode="true"] {
+	--text: var(--light);
+	--background: var(--dark);
+}
+
+body {
+	font-family: var(--font-system);
+	color: var(--text);
+	background-color: var(--background);
+	transition-duration: 200ms; /* This transition makes the change between light and dark mode smoother */
+	transition-property: color, background-color;
+	transition-timing-function: ease;
+}
+
+main {
+	max-width: 90rem;
+	padding: 0 3vw;
+}
+
+a {
+	color: inherit;
+}
+
+button {
+	padding: 0.5rem;
+	border: none;
+	font: inherit;
+	color: inherit;
+	background-color: transparent;
+	cursor: pointer;
+}
+
+/* --------- Utility styles --------- */
+
+/* These classes are used to change the appearance of the typography through the specimen. */
+
+/* You can use them to change the design of the speicmen to suit your needs, or simply add or amend classes in this css file. */
+
+/* You could also choose to get rid of it all together! */
+
+/* Reading direction utility classes required for reading direction. Please do not delete. */
+.ltr {
+	direction: ltr;
+}
+
+.rtl {
+	direction: rtl;
+	unicode-bidi: bidi-override;
+}
+
+.ltrttb {
+	writing-mode: vertical-lr;
+	text-orientation: upright;
+}
+
+.rtlttb {
+	writing-mode: vertical-rl;
+	text-orientation: upright;
+}
+
+/* Spacing utility classes */
+.mt-1u {
+	margin-top: 1rem;
+}
+.mt-2u {
+	margin-top: 2rem;
+}
+.mt-3u {
+	margin-top: 3rem;
+}
+.mt-4u {
+	margin-top: 4rem;
+}
+.mt-5u {
+	margin-top: 5rem;
+}
+
+.mb-1u {
+	margin-bottom: 1rem;
+}
+.mb-2u {
+	margin-bottom: 2rem;
+}
+.mb-3u {
+	margin-bottom: 3rem;
+}
+.mb-4u {
+	margin-bottom: 4rem;
+}
+.mb-5u {
+	margin-bottom: 5rem;
+}
+
+.pt-1u {
+	padding-top: 1rem;
+}
+.pt-2u {
+	padding-top: 2rem;
+}
+.pt-3u {
+	padding-top: 3rem;
+}
+.pt-4u {
+	padding-top: 4rem;
+}
+.pt-5u {
+	padding-top: 5rem;
+}
+
+.pb-1u {
+	padding-bottom: 1rem;
+}
+.pb-2u {
+	padding-bottom: 2rem;
+}
+.pb-3u {
+	padding-bottom: 3rem;
+}
+.pb-4u {
+	padding-bottom: 4rem;
+}
+.pb-5u {
+	padding-bottom: 5rem;
+}
+
+/* Typesetting utility classes */
+.italic {
+	font-style: italic;
+}
+
+/* Font sizes (relative to viewport) */
+.type-8xl {
+	font-size: clamp(5rem, 25vw, 21rem);
+	padding: 0;
+	margin: 0;
+}
+.type-7xl {
+	font-size: clamp(4rem, 17vw, 17.5rem);
+	padding: 0;
+	margin: 0;
+}
+.type-6xl {
+	font-size: clamp(3rem, 15vw, 15.5rem);
+	padding: 0;
+	margin: 0;
+}
+.type-5xl {
+	font-size: clamp(2rem, 14vw, 14rem);
+	padding: 0;
+	margin: 0;
+}
+.type-4xl {
+	font-size: clamp(1.6rem, 6vw, 8rem);
+	padding: 0;
+	margin: 0;
+}
+.type-3xl {
+	font-size: clamp(3rem, 5vw, 6.2rem);
+}
+.type-2xl {
+	font-size: clamp(1.8rem, 3vw, 3.4rem);
+}
+.type-xl {
+	font-size: clamp(1.4rem, 2vw, 2.8rem);
+}
+.type-l {
+	font-size: clamp(1.3rem, 1.6vw, 1.8rem);
+}
+.type-m {
+	font-size: clamp(1.2rem, 1.4vw, 1.6rem);
+}
+.type-s {
+	font-size: 0.8rem;
+}
+.type-xs {
+	font-size: 0.7rem;
+}
+.type-2xs {
+	font-size: 0.6rem;
+}
+.type-3xs {
+	font-size: 0.5rem;
+}
+
+/* font weights EXPERIMENTAL */
+.fw100 {
+	font-variation-settings: "wght" 100;
+}
+.fw200 {
+	font-variation-settings: "wght" 200;
+}
+.fw300 {
+	font-variation-settings: "wght" 300;
+}
+.fw400 {
+	font-variation-settings: "wght" 400;
+}
+.fw500 {
+	font-variation-settings: "wght" 500;
+}
+.fw600 {
+	font-variation-settings: "wght" 600;
+}
+.fw700 {
+	font-variation-settings: "wght" 700;
+}
+.fw800 {
+	font-variation-settings: "wght" 800;
+}
+.fw900 {
+	font-variation-settings: "wght" 900;
+}
+
+/* Line height */
+.lh08 {
+	line-height: 0.8;
+}
+.lh09 {
+	line-height: 0.9;
+}
+.lh10 {
+	line-height: 1;
+}
+.lh11 {
+	line-height: 1.1;
+}
+.lh12 {
+	line-height: 1.2;
+}
+.lh13 {
+	line-height: 1.3;
+}
+.lh14 {
+	line-height: 1.4;
+}
+
+/* Alignment */
+.align-centre {
+	text-align: center;
+}
+.align-justify {
+	text-align: justify;
+}
+.align-left {
+	text-align: left;
+}
+.align-right {
+	text-align: right;
+}
+
+/* Columns */
+.columns-2 {
+	column-count: 2;
+	column-gap: 1em;
+}
+
+.columns-3 {
+	column-count: 3;
+	column-gap: 0.8em;
+}
+
+/* --------- END Utility styles --------- */
+
+/* --------- CONTAINER styles --------- */
+
+/* These are styles for each vertically stacked container. */
+
+/* Where applicable, they override, or build on top of, styles provided the efoundation for Specimen Builder: Specimen Skeleton. */
+
+/* Global styles */
+.container {
+	border-top: 1px solid var(--text);
+	padding: 0;
+}
+
+/* CONTAINER: Masthead */
+.masthead {
+	display: grid;
+	grid-template-columns: 3fr 1fr;
+	grid-template-rows: 1fr;
+	gap: 1px 1px;
+	grid-template-areas: "title meta";
+}
+
+/* Responsive layout styles */
+@media only screen and (max-width: 590px) {
+	.masthead {
+		display: inline-block;
+	}
+}
+
+.masthead-title {
+	grid-area: title;
+}
+
+.masthead-meta {
+	grid-area: meta;
+	font-size: 0.8rem;
+	font-family: var(--font-system);
+	line-height: 1.3;
+	padding-left: 1vw;
+}
+
+.faux-button {
+	background-color: var(--text);
+	display: inline-block;
+	padding: 1em 3em;
+	margin: 2em 0 0 0;
+	color: var(--background);
+	text-decoration: none;
+	font-weight: 600;
+	border: 1px solid var(--background);
+	transition-duration: 200ms;
+	transition-property: color, background-color, border;
+	transition-timing-function: ease;
+}
+
+.faux-button:hover {
+	background-color: var(--background);
+	color: var(--text);
+	border: 1px solid var(--text);
+}
+
+/* Meta */
+.meta {
+	font-family: var(--font-system);
+	text-transform: uppercase;
+	letter-spacing: 1px;
+	font-size: 0.7em;
+	color: var(--grey-mid);
+}
+
+/* Preview layout */
+.interactive-controls {
+	display: grid;
+	grid-template-columns: 3fr 1fr;
+	grid-template-rows: 1fr;
+	gap: 1px 1px;
+	grid-template-areas: "preview controls";
+}
+
+/* Responsive layout styles */
+@media only screen and (max-width: 590px) {
+	.interactive-controls {
+		display: inline-block;
+	}
+}
+
+.controls {
+	grid-area: controls;
+	border-left: 1px solid var(--text);
+	padding-left: 1vw;
+	font-family: var(--font-system);
+}
+
+/* Responsive layout styles */
+@media only screen and (max-width: 590px) {
+	.controls {
+		border: none;
+	}
+}
+
+.interactive-controls-text {
+	grid-area: preview;
+	padding: 0 50px 0 0;
+}
+
+[contenteditable] {
+	outline: 0 solid transparent;
+}
+
+.interactive-controls label {
+	font-size: 0.8rem;
+	font-weight: 400;
+}
+
+.interactive-controls-buttons button {
+	padding: 8px 8px 5px 8px;
+	color: var(--text);
+	transition-property: color, background-color;
+	transition-timing-function: ease;
+	transition-duration: 200ms;
+}
+
+.interactive-controls-buttons button svg {
+	width: 18px;
+	fill: currentColor;
+	transition: fill 200ms ease;
+}
+
+.interactive-controls-buttons button.active {
+	background: var(--grey-mid);
+}
+
+/* Range slider */
+input[type="range"] {
+	height: 2em;
+	-webkit-appearance: none;
+	width: 100%;
+	background-color: var(--background);
+}
+input[type="range"]:focus {
+	outline: none;
+}
+
+/* Webkit styles */
+input[type="range"]::-webkit-slider-runnable-track {
+	width: 100%;
+	height: 1px;
+	cursor: pointer;
+	background: var(--text);
+	border-radius: 0;
+	border: 0 solid var(--text);
+}
+input[type="range"]::-webkit-slider-thumb {
+	box-shadow: 0 0 0 var(--text);
+	border: 3px solid var(--background);
+	height: 17px;
+	width: 17px;
+	border-radius: 12px;
+	background: var(--text);
+	cursor: pointer;
+	-webkit-appearance: none;
+	margin-top: -8px;
+}
+input[type="range"]:focus::-webkit-slider-runnable-track {
+	background: var(--text);
+}
+
+/* Moz styles */
+input[type="range"]::-moz-range-track {
+	width: 100%;
+	height: 1px;
+	cursor: pointer;
+	background: var(--text);
+}
+input[type="range"]::-moz-range-thumb {
+	border: 3px solid var(--background);
+	height: 12px;
+	width: 12px;
+	border-radius: 9px;
+	background: var(--text);
+	cursor: pointer;
+}
+
+/* IE styles */
+input[type="range"]::-ms-track {
+	width: 100%;
+	height: 4px;
+	cursor: pointer;
+	background: transparent;
+	border-color: transparent;
+	color: transparent;
+}
+
+input[type="range"]::-ms-fill-lower {
+	background: #000;
+	border: 0 solid #000;
+	border-radius: 0;
+	box-shadow: 0 0 0 #000;
+}
+input[type="range"]::-ms-fill-upper {
+	background: #000;
+	border: 0 solid #000;
+	border-radius: 0;
+	box-shadow: 0 0 0 #000;
+}
+input[type="range"]::-ms-thumb {
+	margin-top: 1px;
+	box-shadow: 0 0 0 #000;
+	border: 0 solid #000;
+	height: 20px;
+	width: 20px;
+	border-radius: 10px;
+	background: #000;
+	cursor: pointer;
+}
+input[type="range"]:focus::-ms-fill-lower {
+	background: #000;
+}
+input[type="range"]:focus::-ms-fill-upper {
+	background: #000;
+}
+
+/* END CONTAINER: Masthead */
+
+/* CONTAINER: Setting */
+.setting {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	grid-gap: 2rem;
+}
+
+/* Responsive layout styles */
+@media only screen and (max-width: 590px) {
+	.setting {
+		display: inline-block;
+	}
+}
+
+.column-1 {
+	grid-column: 1;
+}
+
+.column-2 {
+	grid-column: 2;
+}
+
+.setting p {
+	margin: 0.6em 0 0.4em 0;
+	padding: 0;
+}
+
+/* END CONTAINER: Setting */
+
+/* CONTAINER: Character grid */
+.character-grid h3 {
+	font-family: var(--font-system);
+	font-size: 0.7rem;
+	color: var(--grey-mid);
+	text-transform: uppercase;
+	letter-spacing: 1px;
+}
+
+/* END CONTAINER: Character grid */
+
+/* CONTAINER: Language */
+.language {
+	font-size: 0.8rem;
+	font-family: var(--font-system);
+	line-height: 1.3;
+}
+
+/* END CONTAINER: Language */
+
+/* CONTAINER: Footer */
+.footer {
+	font-size: 0.8rem;
+	font-family: var(--font-system);
+	line-height: 1.3;
+}
+
+/* END CONTAINER: Footer */
+</file>
+
+<file path="src/css/variable-support.css">
+.variable-support-message {
+	display: block;
+}
+
+@supports (font-variation-settings: normal) {
+	.variable-support-message {
+		display: none;
+	}
+}
+</file>
+
+<file path="src/js/assets.js">
+/**
+ * This file automatically requires every supported image in `src/img`.
+ */
+const requireAll = r => r.keys().forEach(r);
+requireAll(require.context("../img/?external", true, /\.(png|jpg|svg)$/));
+</file>
+
+<file path="src/js/main.js">
+// Copyright 2019 Google LLC
+
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+
+//     https://www.apache.org/licenses/LICENSE-2.0
+
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+import "./assets.js";
+import fontData from "../_data/fontdata.json";
+import FontFaceObserver from "fontfaceobserver";
+
+const fontTimeOut = 5000; // In milliseconds
+const fontClasses = fontData.map(f => f.selector);
+
+// Generic: throttle
+const throttle = (fn, wait) => {
+	let last, queue;
+
+	return function runFn(...args) {
+		const now = Date.now();
+		queue = clearTimeout(queue);
+
+		if (!last || now - last >= wait) {
+			fn.apply(null, args);
+			last = now;
+		} else {
+			queue = setTimeout(runFn.bind(null, ...args), wait - (now - last));
+		}
+	};
+};
+
+// Set up FontFaceObserver
+let observers = [];
+for (const fd of fontData) {
+	const font = new FontFaceObserver(fd.name);
+	observers.push(font.load(null, fontTimeOut));
+}
+
+Promise.all(observers).then(
+	() => {
+		// All fonts have loaded
+		document.documentElement.classList.add("fonts-loaded");
+	},
+	() => {
+		// One or more fonts didn't load
+		document.documentElement.classList.add("fonts-failed");
+	}
+);
+
+// Interactive controls (sliders that tweak axes)
+const interactives = document.querySelectorAll(".interactive-controls");
+for (const interactive of interactives) {
+	const area = interactive.querySelector(".interactive-controls-text");
+	const styles = interactive.querySelector(".interactive-controls-styles");
+	const sliders = interactive.querySelectorAll(
+		".interactive-controls-slider"
+	);
+	const instances = interactive.querySelector(
+		".interactive-controls-instances"
+	);
+
+	const varset = (name, value) => {
+		area.style.setProperty(`--${name}`, value);
+	};
+
+	for (const slider of sliders) {
+		// Apply initial axis value to text area
+		varset(slider.name, slider.value);
+		slider.oninput = e => {
+			// Set new axis value to text area
+			varset(e.target.name, e.target.value);
+			// Unselect named instance dropdown
+			// Optionally, see if current axes match instance and select that
+			if (instances) {
+				instances.selectedIndex = -1;
+			}
+		};
+	}
+
+	if (instances) {
+		instances.onchange = e => {
+			const axes = JSON.parse(
+				e.target.options[e.target.selectedIndex].value
+			);
+			for (const axis in axes) {
+				// Set new axis value on slider
+				interactive.querySelector(`[name=${axis}]`).value = axes[axis];
+				// Apply new axis value to text area
+				varset(axis, axes[axis]);
+			}
+		};
+	}
+
+	if (styles) {
+		styles.onchange = e => {
+			area.classList.remove(...fontClasses);
+			area.classList.add(e.target.value);
+		};
+	}
+
+	// Alignment controls for type tester
+	// Add active class to the current button (highlight it)
+	const buttonContainer = interactive.querySelector(
+		".interactive-controls-buttons"
+	);
+	const buttons = buttonContainer.querySelectorAll("button");
+	for (const button of buttons) {
+		button.addEventListener("click", function() {
+			// Update button class
+			buttonContainer.querySelector(".active").classList.remove("active");
+			this.classList.add("active");
+			// Apply new alignment
+			area.classList.remove("align-left", "align-centre", "align-right");
+			area.classList.add(this.value);
+		});
+	}
+}
+
+// Watch if .am-i-in-view elements are visible on screen
+// and apply a class accordingly
+if ("IntersectionObserver" in window) {
+	// eslint-disable-next-line compat/compat
+	const obs = new IntersectionObserver(els => {
+		els.forEach(el => {
+			el.intersectionRatio > 0
+				? el.target.classList.add("in-view")
+				: el.target.classList.remove("in-view");
+		});
+	});
+
+	const elements = document.querySelectorAll(".am-i-in-view");
+	elements.forEach(el => {
+		obs.observe(el);
+	});
+}
+
+// Character grid
+const grid = document.querySelector(".character-grid");
+const gridzoom = document.querySelector(".character-grid-zoom");
+const gridtoggle = document.querySelector(".character-grid-toggle");
+grid.onmousemove = throttle(e => {
+	if (e.target.tagName === "LI") {
+		gridzoom.innerHTML = e.target.innerHTML;
+	}
+}, 100);
+if (gridtoggle) {
+	gridtoggle.onchange = e => {
+		grid.classList.remove(...fontClasses);
+		grid.classList.add(e.target.value);
+	};
+}
+</file>
+
+<file path="src/.eslintrc.js">
+module.exports = {
+	root: true,
+	env: {
+		browser: true,
+		es6: true,
+		commonjs: true
+	},
+	globals: {
+		process: true
+	},
+	plugins: ["compat", "prettier"],
+	extends: ["eslint:recommended"],
+	parserOptions: {
+		sourceType: "module",
+		ecmaFeatures: {
+			modules: true,
+			experimentalObjectRestSpread: true
+		}
+	},
+	rules: {
+		"prettier/prettier": "error",
+		"compat/compat": "error"
+	}
+};
+</file>
+
+<file path="src/index.html">
+---
+layout: default.html
+---
+
+<div class="loading-message">
+	<span class="loading-message-loading">Loading...</span>
+	<span class="loading-message-failed">Failed :-(</span>
+</div>
+
+<div class="variable-support-message">
+	Your browser doesn't do variable fonts :-(
+</div>
+
+<main>
+
+	{% assign main_id = 0 %}
+	{% assign main_selector = fontdata[main_id].selector %}
+
+		{% include navigation.html %}
+	<div class="container">
+		{% include masthead.html %}
+	</div>
+	<div class="container">
+		{% include interactive-controls.html %}
+	</div>
+	<div class="container">
+		{% include specimen.html %}
+	</div>
+	<div class="container">
+		{% include setting.html %}
+	</div>
+	<div class="container">
+		{% include character-grid.html %}
+	</div>
+	<div class="container">
+		{% include language.html %}
+	</div>
+
+	<div class="container">
+		{% include footer.html %}
+	</div>
+</main>
+</file>
+
+<file path=".editorconfig">
+root = true
+
+[*]
+indent_style = tab
+indent_size = 4
+end_of_line = lf
+charset = utf-8
+trim_trailing_whitespace = true
+insert_final_newline = true
+
+[*.md]
+trim_trailing_whitespace = false
+</file>
+
+<file path=".eleventy.js">
+const fs = require("fs");
+const path = require("path");
+const util = require("util");
+const readFile = util.promisify(fs.readFile);
+const htmlmin = require("html-minifier");
+
+const inputDir = path.resolve(__dirname, "./src");
+
+const webpackAssetPath = async name => {
+	const manifestData = await readFile(
+		path.resolve(inputDir, "_includes", ".webpack", "manifest.json")
+	);
+	const manifest = JSON.parse(manifestData);
+
+	const assetPath = manifest[name];
+	if (assetPath == null) {
+		throw new Error(
+			`Unknown Webpack asset requested: ${name}. Check .webpack/manifest.json.`
+		);
+	}
+
+	return assetPath;
+};
+
+const webpackAssetContents = async name => {
+	const assetName = await webpackAssetPath(name);
+	const filePath = path.resolve(__dirname, "_site", assetName);
+
+	return readFile(filePath);
+};
+
+const relativePathTag = processPath => liquidEngine => {
+	return {
+		parse: function(tagToken) {
+			this.arg = tagToken.args;
+			this.templateFile = tagToken.file;
+		},
+		render: async function(scope) {
+			const fileParam =
+				liquidEngine.evalValue(this.arg, scope) || this.arg;
+
+			const resolvedFile = path.resolve(
+				path.dirname(this.templateFile),
+				fileParam
+			);
+
+			const srcRelativePath = path.relative(inputDir, resolvedFile);
+			return processPath(srcRelativePath);
+		}
+	};
+};
+
+module.exports = eleventyConfig => {
+	eleventyConfig.setUseGitIgnore(false);
+
+	eleventyConfig.addFilter("json_stringify", JSON.stringify);
+
+	eleventyConfig.addLiquidTag(
+		"webpackAssetPath",
+		relativePathTag(webpackAssetPath)
+	);
+	eleventyConfig.addLiquidTag(
+		"includeWebpackAsset",
+		relativePathTag(webpackAssetContents)
+	);
+
+	if (process.env.ELEVENTY_ENV === "production") {
+		eleventyConfig.addTransform("htmlmin", (content, outputPath) => {
+			if (outputPath.endsWith(".html")) {
+				let minified = htmlmin.minify(content, {
+					useShortDoctype: true,
+					removeComments: true,
+					collapseWhitespace: true
+				});
+				return minified;
+			}
+
+			return content;
+		});
+	}
+
+	return {
+		dir: {
+			input: "./src",
+			layouts: "_layouts"
+		}
+	};
+};
+</file>
+
+<file path=".eleventyignore">
+node_modules/
+README.md
+_tools/
+</file>
+
+<file path=".eslintignore">
+_site/
+</file>
+
+<file path=".eslintrc.js">
+module.exports = {
+	plugins: ["prettier"],
+	extends: ["eslint:recommended", "plugin:node/recommended"],
+	rules: {
+		"prettier/prettier": "error",
+		"node/no-unpublished-require": "off"
+	}
+};
+</file>
+
+<file path=".gitignore">
+.DS_Store
+_site/
+node_modules/
+src/_includes/.webpack
+</file>
+
+<file path=".prettierignore">
+src/_includes/.webpack
+*.html
+</file>
+
+<file path=".stylelintrc.js">
+module.exports = {
+	extends: ["stylelint-config-standard", "stylelint-config-prettier"],
+	plugins: ["stylelint-no-unsupported-browser-features"],
+	rules: {
+		"selector-id-pattern": [
+			"^([a-z][a-z0-9]*)(-[a-z0-9]+)*$",
+			{
+				message:
+					"Selector should use lowercase and separate words with hyphens (selector-class-pattern)"
+			}
+		],
+		"selector-class-pattern": [
+			"^([a-z][a-z0-9]*)(-[a-z0-9]+)*$",
+			{
+				message:
+					"Selector should use lowercase and separate words with hyphens (selector-class-pattern)"
+			}
+		],
+		indentation: "tab",
+		"selector-pseudo-class-no-unknown": [
+			true,
+			{
+				ignorePseudoClasses: ["global"]
+			}
+		],
+		"plugin/no-unsupported-browser-features": [
+			true,
+			{
+				severity: "warning",
+				ignore: ["font-unicode-range", "css-resize", "css-appearance"]
+			}
+		]
+	}
+};
+</file>
+
+<file path=".tool-versions">
+nodejs 12.13.1
+</file>
+
+<file path="AUTHORS.txt">
+# This is the official list of project authors for copyright purposes.
+# This file is distinct from the CONTRIBUTORS.txt file.
+# See the latter for an explanation.
+#
+# Names should be added to this file as:
+# Name or Organization <email address>
+
+Google Inc.
+</file>
+
+<file path="CONTRIBUTORS.txt">
+# This is the list of people who have contributed to this project,
+# and includes those not listed in AUTHORS.txt because they are not
+# copyright authors. For example, company employees may be listed
+# here because their company holds the copyright and is listed there.
+#
+# When adding J Random Contributor's name to this file, either J's
+# name or J's organization's name should be added to AUTHORS.txt
+#
+# Names should be added to this file as:
+# Name <email address>
+
+Mark Boulton <mark@typespecimens.xyz>
+Roel Nieskens <roel@pixelambacht.nl>
+Pascal Widdershoven <pascal@kabisa.nl>
+Guido Theelen <guido@kabisa.nl>
+</file>
+
+<file path="LICENSE.txt">
+Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+   1. Definitions.
+
+      "License" shall mean the terms and conditions for use, reproduction,
+      and distribution as defined by Sections 1 through 9 of this document.
+
+      "Licensor" shall mean the copyright owner or entity authorized by
+      the copyright owner that is granting the License.
+
+      "Legal Entity" shall mean the union of the acting entity and all
+      other entities that control, are controlled by, or are under common
+      control with that entity. For the purposes of this definition,
+      "control" means (i) the power, direct or indirect, to cause the
+      direction or management of such entity, whether by contract or
+      otherwise, or (ii) ownership of fifty percent (50%) or more of the
+      outstanding shares, or (iii) beneficial ownership of such entity.
+
+      "You" (or "Your") shall mean an individual or Legal Entity
+      exercising permissions granted by this License.
+
+      "Source" form shall mean the preferred form for making modifications,
+      including but not limited to software source code, documentation
+      source, and configuration files.
+
+      "Object" form shall mean any form resulting from mechanical
+      transformation or translation of a Source form, including but
+      not limited to compiled object code, generated documentation,
+      and conversions to other media types.
+
+      "Work" shall mean the work of authorship, whether in Source or
+      Object form, made available under the License, as indicated by a
+      copyright notice that is included in or attached to the work
+      (an example is provided in the Appendix below).
+
+      "Derivative Works" shall mean any work, whether in Source or Object
+      form, that is based on (or derived from) the Work and for which the
+      editorial revisions, annotations, elaborations, or other modifications
+      represent, as a whole, an original work of authorship. For the purposes
+      of this License, Derivative Works shall not include works that remain
+      separable from, or merely link (or bind by name) to the interfaces of,
+      the Work and Derivative Works thereof.
+
+      "Contribution" shall mean any work of authorship, including
+      the original version of the Work and any modifications or additions
+      to that Work or Derivative Works thereof, that is intentionally
+      submitted to Licensor for inclusion in the Work by the copyright owner
+      or by an individual or Legal Entity authorized to submit on behalf of
+      the copyright owner. For the purposes of this definition, "submitted"
+      means any form of electronic, verbal, or written communication sent
+      to the Licensor or its representatives, including but not limited to
+      communication on electronic mailing lists, source code control systems,
+      and issue tracking systems that are managed by, or on behalf of, the
+      Licensor for the purpose of discussing and improving the Work, but
+      excluding communication that is conspicuously marked or otherwise
+      designated in writing by the copyright owner as "Not a Contribution."
+
+      "Contributor" shall mean Licensor and any individual or Legal Entity
+      on behalf of whom a Contribution has been received by Licensor and
+      subsequently incorporated within the Work.
+
+   2. Grant of Copyright License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      copyright license to reproduce, prepare Derivative Works of,
+      publicly display, publicly perform, sublicense, and distribute the
+      Work and such Derivative Works in Source or Object form.
+
+   3. Grant of Patent License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      (except as stated in this section) patent license to make, have made,
+      use, offer to sell, sell, import, and otherwise transfer the Work,
+      where such license applies only to those patent claims licensable
+      by such Contributor that are necessarily infringed by their
+      Contribution(s) alone or by combination of their Contribution(s)
+      with the Work to which such Contribution(s) was submitted. If You
+      institute patent litigation against any entity (including a
+      cross-claim or counterclaim in a lawsuit) alleging that the Work
+      or a Contribution incorporated within the Work constitutes direct
+      or contributory patent infringement, then any patent licenses
+      granted to You under this License for that Work shall terminate
+      as of the date such litigation is filed.
+
+   4. Redistribution. You may reproduce and distribute copies of the
+      Work or Derivative Works thereof in any medium, with or without
+      modifications, and in Source or Object form, provided that You
+      meet the following conditions:
+
+      (a) You must give any other recipients of the Work or
+          Derivative Works a copy of this License; and
+
+      (b) You must cause any modified files to carry prominent notices
+          stating that You changed the files; and
+
+      (c) You must retain, in the Source form of any Derivative Works
+          that You distribute, all copyright, patent, trademark, and
+          attribution notices from the Source form of the Work,
+          excluding those notices that do not pertain to any part of
+          the Derivative Works; and
+
+      (d) If the Work includes a "NOTICE" text file as part of its
+          distribution, then any Derivative Works that You distribute must
+          include a readable copy of the attribution notices contained
+          within such NOTICE file, excluding those notices that do not
+          pertain to any part of the Derivative Works, in at least one
+          of the following places: within a NOTICE text file distributed
+          as part of the Derivative Works; within the Source form or
+          documentation, if provided along with the Derivative Works; or,
+          within a display generated by the Derivative Works, if and
+          wherever such third-party notices normally appear. The contents
+          of the NOTICE file are for informational purposes only and
+          do not modify the License. You may add Your own attribution
+          notices within Derivative Works that You distribute, alongside
+          or as an addendum to the NOTICE text from the Work, provided
+          that such additional attribution notices cannot be construed
+          as modifying the License.
+
+      You may add Your own copyright statement to Your modifications and
+      may provide additional or different license terms and conditions
+      for use, reproduction, or distribution of Your modifications, or
+      for any such Derivative Works as a whole, provided Your use,
+      reproduction, and distribution of the Work otherwise complies with
+      the conditions stated in this License.
+
+   5. Submission of Contributions. Unless You explicitly state otherwise,
+      any Contribution intentionally submitted for inclusion in the Work
+      by You to the Licensor shall be under the terms and conditions of
+      this License, without any additional terms or conditions.
+      Notwithstanding the above, nothing herein shall supersede or modify
+      the terms of any separate license agreement you may have executed
+      with Licensor regarding such Contributions.
+
+   6. Trademarks. This License does not grant permission to use the trade
+      names, trademarks, service marks, or product names of the Licensor,
+      except as required for reasonable and customary use in describing the
+      origin of the Work and reproducing the content of the NOTICE file.
+
+   7. Disclaimer of Warranty. Unless required by applicable law or
+      agreed to in writing, Licensor provides the Work (and each
+      Contributor provides its Contributions) on an "AS IS" BASIS,
+      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+      implied, including, without limitation, any warranties or conditions
+      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+      PARTICULAR PURPOSE. You are solely responsible for determining the
+      appropriateness of using or redistributing the Work and assume any
+      risks associated with Your exercise of permissions under this License.
+
+   8. Limitation of Liability. In no event and under no legal theory,
+      whether in tort (including negligence), contract, or otherwise,
+      unless required by applicable law (such as deliberate and grossly
+      negligent acts) or agreed to in writing, shall any Contributor be
+      liable to You for damages, including any direct, indirect, special,
+      incidental, or consequential damages of any character arising as a
+      result of this License or out of the use or inability to use the
+      Work (including but not limited to damages for loss of goodwill,
+      work stoppage, computer failure or malfunction, or any and all
+      other commercial damages or losses), even if such Contributor
+      has been advised of the possibility of such damages.
+
+   9. Accepting Warranty or Additional Liability. While redistributing
+      the Work or Derivative Works thereof, You may choose to offer,
+      and charge a fee for, acceptance of support, warranty, indemnity,
+      or other liability obligations and/or rights consistent with this
+      License. However, in accepting such obligations, You may act only
+      on Your own behalf and on Your sole responsibility, not on behalf
+      of any other Contributor, and only if You agree to indemnify,
+      defend, and hold each Contributor harmless for any liability
+      incurred by, or claims asserted against, such Contributor by reason
+      of your accepting any such warranty or additional liability.
+
+   END OF TERMS AND CONDITIONS
+
+   APPENDIX: How to apply the Apache License to your work.
+
+      To apply the Apache License to your work, attach the following
+      boilerplate notice, with the fields enclosed by brackets "[]"
+      replaced with your own identifying information. (Don't include
+      the brackets!)  The text should be enclosed in the appropriate
+      comment syntax for the file format. We also recommend that a
+      file or class name and description of purpose be included on the
+      same "printed page" as the copyright notice for easier
+      identification within third-party archives.
+
+   Copyright [yyyy] [name of copyright owner]
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+</file>
+
+<file path="package.json">
+{
+	"name": "specimen-skeleton",
+	"private": true,
+	"version": "1.0.0",
+	"main": "index.js",
+	"license": "MIT",
+	"scripts": {
+		"clean": "rimraf ./_site",
+		"build": "cross-env NODE_ENV=production ELEVENTY_ENV=production run-s clean 'build:*'",
+		"build:webpack": "NODE_OPTIONS=--openssl-legacy-provider webpack",
+		"build:eleventy": "eleventy",
+		"start": "cross-env NODE_ENV=development ELEVENTY_ENV=development npm-run-all clean build:webpack --parallel 'start:*'",
+		"start:webpack": "NODE_OPTIONS=--openssl-legacy-provider webpack -w",
+		"start:eleventy": "eleventy --serve",
+		"prettier": "prettier '{src/**/*.{js,css,json,html},*.js,*.json,*.html}'",
+		"stylelint": "stylelint 'src/css/**/*.css'",
+		"eslint": "eslint .",
+		"lint": "run-s 'prettier --check' eslint stylelint",
+		"test": "run-s lint",
+		"fontdata": "node _tools/generateFontData.js"
+	},
+	"browserslist": [
+		"edge >= 17",
+		"firefox >= 62",
+		"chrome >= 66",
+		"safari >= 11",
+		"opera >= 53",
+		"ios_saf >= 11.2",
+		"samsung >= 8.2"
+	],
+	"devDependencies": {
+		"@11ty/eleventy": "^0.9.0",
+		"@babel/core": "^7.7.4",
+		"@babel/preset-env": "^7.7.4",
+		"autoprefixer": "^9.7.2",
+		"babel-eslint": "^10.0.3",
+		"babel-loader": "^8.0.6",
+		"cross-env": "^6.0.3",
+		"css-loader": "^3.2.0",
+		"cssnano": "^4.1.10",
+		"eslint": "^6.7.2",
+		"eslint-plugin-compat": "^3.3.0",
+		"eslint-plugin-node": "^11.0.0",
+		"eslint-plugin-prettier": "^3.1.1",
+		"file-loader": "^5.0.2",
+		"html-minifier": "^4.0.0",
+		"husky": "^3.1.0",
+		"lint-staged": "^9.5.0",
+		"mini-css-extract-plugin": "^0.8.0",
+		"npm-run-all": "^4.1.5",
+		"postcss": "^7.0.23",
+		"postcss-import": "^12.0.1",
+		"postcss-loader": "^3.0.0",
+		"prettier": "^1.19.1",
+		"rimraf": "^3.0.0",
+		"specimen-skeleton-support": "https://github.com/kabisa/specimen-skeleton-support.git#master",
+		"stylelint": "^12.0.0",
+		"stylelint-config-prettier": "^7.0.0",
+		"stylelint-config-standard": "^19.0.0",
+		"stylelint-no-unsupported-browser-features": "^4.0.0",
+		"svg-url-loader": "^3.0.3",
+		"url-loader": "^3.0.0",
+		"webpack": "^4.41.2",
+		"webpack-cli": "^3.3.10",
+		"webpack-manifest-plugin": "v3.0.0-rc.0"
+	},
+	"lint-staged": {
+		"*.{js,json,html,css}": [
+			"prettier --write",
+			"git add"
+		],
+		"*.js": [
+			"eslint"
+		],
+		"*.css": [
+			"stylelint"
+		]
+	},
+	"husky": {
+		"hooks": {
+			"pre-commit": "lint-staged"
+		}
+	},
+	"dependencies": {
+		"fontfaceobserver": "^2.1.0"
+	},
+	"engines": {
+		"node": ">=12"
+	}
+}
+</file>
+
+<file path="postcss.config.js">
+const cssnano = () => {
+	return require("cssnano")({
+		preset: "default"
+	});
+};
+
+module.exports = {
+	plugins: [
+		require("postcss-import"),
+		require("autoprefixer"),
+		process.env.NODE_ENV === "production" ? cssnano() : false
+	]
+};
+</file>
+
+<file path="README.md">
+<h1 align="center">Specimen Builder</h1>
+
+Specimen Builder is a quick and easy way to build digital type specimens. It uses [Specimen Skeleton](https://github.com/kabisa/specimen-skeleton) as a base and builds on top of it with a theme design and some configuration. Specimen Skeleton is built using [Eleventy](https://www.11ty.dev/)
+
+The design rationale for specimen builder comes from several months of design research into the effectiveness of digital type specimens. [You can read the final report of that research here](https://typespecimens.xyz/journal/specimen-research-insights/).
+
+### Requirements
+- This project requires Node.js >= 12 and [yarn](https://yarnpkg.com/).
+- It builds from *woff2* font files, either individual font files or variable fonts.
+
+### Getting started
+To get started, run the following commands from the root of the repo:
+
+- `yarn install`
+- `yarn start`
+
+This will give you a basic specimen with the default content, configuration, and fonts.
+
+### Workflow for adding your own fonts
+
+#### Deleting the placeholder fonts
+- Delete the placegholder font files in `src/fonts`
+- Delete `src/_data/fontdata.json`
+- Delete the folder `src/_data/fonts`
+
+#### Add your own fonts
+- Add your font files to the `src/fonts` directory. They must be in woff2 format.
+- Run `yarn fontdata`
+- If you are using multiple font files, you can reorder the order in which the array has been generated in `src/_data/fontdata.json`. This will determine the order the font files will appear in the tester dropdown.
+
+#### Editing the placeholder content
+- Edit the site configuration in `src/_data/site.js`
+- Edit the content configuration in `src/_data/content.js`
+
+#### Editing the default 'main_id' variable
+- `main_id` is the variable that defines the font file for the whole specimen. It is defined in `src/index.html` in this line of code: `{% assign main_id = 0 %}`.
+- The '0' in this example corresponds to the first entry in the fontdata array in `src/_data/fontdata.json`.
+- To change the default font, simply change this variable to the item in the array starting with 0 for the first, 1 for the second etc.
+– So if I had an array of 8 font files, and I wanted my specimen to be in Regular – which is the fourth item in the array – then `main_id = 3`.
+
+#### Changing the design
+- If you'd like to change the colours, edit the variables in `src/css/theme.css`
+- Assign main variable if using multiple `.woff2` files. In `index.html`, on line 16,  change the `main_id` variable number to the number in the array generated in `_data/fontdata.json`. This will determine the loading font in the type tester.
+- `yarn start` - this will start the local development server, view at http://localhost:8080.
+
+<hr />
+
+### Information architecture
+
+The specimen produced by this tool has vertically stacked 'containers', from top to bottom, they are:
+1. *Navigation*. Containing the Light/Dark toggle.
+2. *Masthead*. Containing critical information regarding the typeface, in addition to large evaluative glyphs and a call to action to download the font.
+3. *Interactive Controls*. An important container for user evaluation. These controls automatically generate sliders and drop downs from either individual font files, or from variable font axis. Simple typesetting tools are available for the user to change alignment, size, and line height.
+4. *Specimen*. Containing several single words set in varying weights. These should be individualised per font.
+5. *Setting*. A container to demonstrate long-form content at various dense settings at sizes.
+6. *Character Grid*. A comprehensive categorised list of all characters within the fonts together with a large size preview.
+7. *Language*. A container displaying a list of supported languages.
+
+HTML files in `src/_includes/` correspond to each container.
+
+<hr />
+
+### Extending Specimen Builder
+
+You can extend the functionality of the specimens produced using Specimen Builder by simply editing the content or CSS.
+
+#### Font styles
+
+When you ran `yarn fontdata`, Specimen Skeleton (remember: the system that is the foundation for Specimen Builder) produced font styles in a css file in `_src/css/font.css`. These can be used as utility classes for typesetting the 'specimen' or 'setting' containers.
+
+
+#### Design tokens
+
+Specimen Builder provides some simple utility classes in the design token CSS – `src/css/theme.css` – to fine-tune your typesetting. The following classes are available:
+
+* Colours: Colours are available as CSS variables. Be mindful of the dark mode, and please ensure you provide sympathetic dark alternatives for every additional colour used.
+* Spacing: Specimen Builder provides em-based spacing units with the classes `.m-1u`, `.m-2u`, and `.p-1u`, `.p-2u` etc. Where u = 1em, m = margin, and p = padding.
+* Font weight. Several typesetting classes are available. eg `.italic`
+* Font size: A large range of em-based font sizes are available from `type-3xs`, to `.type-8xl`.
+* Line height. `.lh08` to `.lh14` represent line height values 0.8 to 1.4.
+* Alignment. `.align-centre`, `.align-left`, `.align-justify`, `.align-right`.
+
+#### Reading direction
+If producing specimens for languages that read right to left, or top to bottom, you need to edit a variable in `_src/data/site.js` called 'direction' and change its value to either:
+
+* Left to right: "ltr"
+* Right to left: "rtl"
+* Left to right, top to bottom: "ltrttb"
+* Right to left, top to bottom: "rtlttb"
+
+These values will change the text blocks in each container.
+
+### Extending Specimen Builder even further!
+
+[Specimen Skeleton](https://github.com/kabisa/specimen-skeleton) – the foundation on which Specimen Builder is built – provides us with some useful tools to extend the specimens even further:
+
+#### Using assets
+
+In HTML, to use an image from your `img` directory, use the following URL value with the relative path to your image:
+
+`<img src="{% webpackAssetPath '../img/my_logo.svg' %}">`
+
+If you want to inline an SVG image, use:
+
+`{% include '../img/my_logo.svg' %}`
+
+or
+
+`{% webpackAssetContents 'img/my_logo.svg' %}`
+
+In CSS, point to the file using the path relative to your CSS file:
+
+`background-image: url(../img/my_logo.svg);`
+
+In CSS, images below 8 KB will be inlined automatically. To force inlined or external, append `?inline` or `?external` respectively, e.g. `url(../img/my_logo.svg?external);`. Inlining in HTML files
+
+#### Am I in view?
+
+Simple example to stop CPU-melting animations when they're not in the viewport. Elements with the class `.am-i-in-view` will get a class `.in-view` when they're in the viewport, and have that class removed when they leave the viewport. Use this to start/stop heavy animations.
+
+Note: this can be repurposed for lazy loading images, pausing video, etc.
+
+<hr />
+
+## Converting ttf to woff2
+
+If you need to compress your `.ttf` font files to `.woff2`, you can use this handy utility from Google
+
+https://github.com/google/woff2
+
+If you're using homebrew on a Mac, you can install it with `brew install woff2`. It'll give you the tools woff2_decompress and woff2_compress.
+
+Use this one liner to compress all .ttf fonts in the current directory: `for f in *.ttf; do woff2_compress $f; done`
+
+## Content sources
+If you are creating specimens in multiple languages, you can use these resources for sourcing content:
+
+1. Rosetta's [Universal Specimen](https://universalspecimen.rosettatype.com)
+The Universal Specimen from Rosetta displays the Universal Declaraiton of Human Rights in multiple panels in 138 languages.
+
+2. Aksharamukha : [Script Converter](http://aksharamukha.appspot.com/texts/triratnanusmriti)
+This is an excellent resource for providing sample text – from old scriptures, or religious text – across many complex scripts and languages (including derivations).
+
+## More about Specimen Skeleton
+
+<p align="center">
+	<img width="175" height="175" src="https://user-images.githubusercontent.com/4570664/74532263-0db14500-4f2f-11ea-96e9-49bcb8699ebb.png">
+</p>
+
+[Specimen Skeleton](https://github.com/kabisa/specimen-skeleton) is an [Eleventy-based](https://www.11ty.dev/) specimen _boilerplate_. It helps you get a basic site up and running quickly, and offers you a few interactive elements to build your demos from.
+
+It will analyse your variable font and generate the CSS necessary _and_ all the sliders, so you'll hit the ground running!
+</file>
+
+<file path="webpack.config.js">
+const path = require("path");
+const MiniCssExtractPlugin = require("mini-css-extract-plugin");
+const ManifestPlugin = require("webpack-manifest-plugin");
+
+const env = process.env.NODE_ENV || "development";
+const isProd = env === "production";
+const input = path.resolve(__dirname, "src");
+const out = path.resolve(__dirname, "_site");
+const exclusions = /node_modules/;
+
+const inlineImgLimit = 8192;
+
+const optimization = {
+	splitChunks: isProd && { chunks: "all" },
+	minimize: isProd,
+	// prints more readable module names in the browser console on HMR updates, in dev
+	namedModules: !isProd,
+	// prevent emitting assets with errors, in dev
+	noEmitOnErrors: !isProd
+};
+
+const fileLoaderOptions = {
+	name: "[path][name].[hash].[ext]",
+	context: input
+};
+
+module.exports = {
+	mode: isProd ? "production" : "development",
+	entry: {
+		main: [
+			path.resolve(input, "js", "main.js"),
+			path.resolve(input, "css", "main.css")
+		]
+	},
+	output: {
+		path: out,
+		filename: "[name].[hash].js",
+		publicPath: "./"
+	},
+	module: {
+		rules: [
+			{
+				test: /\.js$/,
+				exclude: exclusions,
+				use: {
+					loader: "babel-loader",
+					options: {
+						presets: ["@babel/preset-env"]
+					}
+				}
+			},
+			{
+				test: /\.css$/,
+				exclude: exclusions,
+				use: [
+					{
+						loader: MiniCssExtractPlugin.loader
+					},
+					"css-loader",
+					"postcss-loader"
+				]
+			},
+			{
+				include: path.resolve(input, "fonts"),
+				use: [
+					{
+						loader: "file-loader",
+						options: fileLoaderOptions
+					}
+				]
+			},
+			{
+				test: /\.svg$/i,
+				oneOf: [
+					{
+						resourceQuery: /external/,
+						loader: "file-loader",
+						options: fileLoaderOptions
+					},
+					{
+						resourceQuery: /inline/,
+						loader: "svg-url-loader",
+						options: fileLoaderOptions
+					},
+					{
+						loader: "svg-url-loader",
+						options: {
+							...fileLoaderOptions,
+							limit: inlineImgLimit
+						}
+					}
+				]
+			},
+			{
+				test: /\.(png|jpg)$/i,
+				oneOf: [
+					{
+						resourceQuery: /external/,
+						loader: "file-loader",
+						options: fileLoaderOptions
+					},
+					{
+						resourceQuery: /inline/,
+						loader: "url-loader",
+						options: {
+							...fileLoaderOptions,
+							limit: true
+						}
+					},
+					{
+						loader: "url-loader",
+						options: {
+							...fileLoaderOptions,
+							limit: inlineImgLimit
+						}
+					}
+				]
+			}
+		]
+	},
+	devtool: isProd ? false : "eval",
+	optimization,
+	plugins: [
+		new MiniCssExtractPlugin({
+			filename: "styles.[contenthash].css",
+			ignoreOrder: false
+		}),
+		new ManifestPlugin({
+			fileName: path.resolve(
+				input,
+				"_includes",
+				".webpack",
+				"manifest.json"
+			),
+			map: file => {
+				switch (file.name) {
+					case "main.js":
+						file.name = "js/main.js";
+						break;
+					case "main.css":
+						file.name = "css/main.css";
+						break;
+					default:
+						// Strip queries like ?external from asset name
+						file.name = file.name.split("?")[0];
+				}
+
+				return file;
+			}
+		})
+	]
+};
+</file>
+
+</files>

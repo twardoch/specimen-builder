@@ -105,6 +105,10 @@ const main = async () => {
 	// Clear out old data files
 	console.log("Deleting old data files");
 	fs.rmdirSync(dataDirectory, { recursive: true });
+	// Create the dataDirectory if it doesn't exist, as rmdirSync might remove it.
+	if (!fs.existsSync(dataDirectory)) {
+		fs.mkdirSync(dataDirectory, { recursive: true });
+	}
 
 	// Initialise files
 	writeFile(
@@ -113,13 +117,27 @@ const main = async () => {
 	);
 
 	let metaData = [];
+	let sharedCharsetData = null; // To store the first encountered charset data
+
 	for (const fontFile of fontFiles) {
 		const fontData = await parseFontFile(fontFile.path);
 		metaData.push(await getMetaData(fontData, fontFile));
-		await Promise.all([
-			writeDataFiles(fontData),
-			writeStylesheet(fontData, fontFile.path)
-		]);
+
+		// Handle charset data separately to avoid duplication
+		if (fontData.data && fontData.data.charset) {
+			if (!sharedCharsetData) {
+				sharedCharsetData = fontData.data.charset;
+				// Write the shared charset file once
+				const sharedCharsetPath = path.resolve(srcDirectory, "_data", "shared_charset.json");
+				await writeFile(sharedCharsetPath, JSON.stringify(sharedCharsetData, null, 4));
+			}
+			// Remove charset from fontData to prevent individual file creation by writeDataFiles
+			delete fontData.data.charset;
+		}
+
+		// Write other data files (axes, instances, etc.)
+		await writeDataFiles(fontData); // This will now skip charset
+		await writeStylesheet(fontData, fontFile.path);
 	}
 
 	const fileContents = JSON.stringify(metaData, null, 4);
